@@ -1,15 +1,12 @@
 OUTPUT_FORMAT(elf64-x86-64)
-ENTRY(kernel_main)
+ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x00100000;
+    . = 0x400000;
 
-    _kernel_start = .;
-    
-    .text :
-    {
-        *(.text .text.*)
+    .text ALIGN(4K) : {
+        *(.text*)
     }
 
     .rodata ALIGN(4K) : {
@@ -24,11 +21,4 @@ SECTIONS
         *(COMMON)
         *(.bss*)
     }
-
-    . = ALIGN(16);
-    _stack_bottom = .;
-    . += 0x8000;
-    _stack_top = .;
-
-    _kernel_end = .;
 }

@@ -21,9 +21,9 @@ typedef struct {
 } __attribute__((packed)) IDT_Ptr;
 typedef void(*isr_t)(void);
 
-void register_interrupt_handler(uint8_t irq, isr_t handler);
+void register_interrupt_handler(uint16_t irq, isr_t handler);
 void init_idt(void);
-void set_interrupt_handler(uint8_t n, void (*handler)(void));
+void set_interrupt_handler(uint16_t n, void (*handler)(void));
 
 extern void load_idt(IDT_Ptr*);
 

@@ -1,15 +1,12 @@
-// FAT32_Main.h
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 
-// ユーザー側で実装済みと仮定
 bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sector_count);
 bool disk_write(uint32_t lba, const uint8_t *buffer, uint32_t sector_count);
 
-// FAT32 BPB（ブートセクタ情報）
 typedef struct {
     uint16_t bytes_per_sector;
     uint8_t sectors_per_cluster;
@@ -19,14 +16,12 @@ typedef struct {
     uint32_t root_cluster;
 } FAT32_BPB;
 
-// FAT32ファイル情報
 typedef struct {
     char name[12];
     uint32_t first_cluster;
     uint32_t size;
 } FAT32_FILE;
 
-// 初期化
 bool fat32_init(void);
 bool fat32_find_file(const char *filename, FAT32_FILE *file);
 bool fat32_read_file(FAT32_FILE *file, uint8_t *buffer);

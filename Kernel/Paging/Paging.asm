@@ -13,11 +13,11 @@ pd:
 SECTION .text
 paging_init_asm:
     mov rax, pdpt
-    or  rax, 0b11
+    or  rax, 0b111
     mov [pml4], rax
 
     mov rax, pd
-    or  rax, 0b11
+    or  rax, 0b111
     mov [pdpt], rax
 
     mov rax, cr4
@@ -28,8 +28,8 @@ paging_init_asm:
 .fill_pd:
     mov rax, rcx
     shl rax, 21
-    or  rax, (1 << 7) | 0b11
-    mov [pd + rcx * 8], rax
+    or  rax, (1 << 7) | 0b111
+    mov [pd + rcx*8], rax
     inc rcx
     cmp rcx, 512
     jne .fill_pd
@@ -38,7 +38,9 @@ paging_init_asm:
     mov cr3, rax
 
     mov rax, cr0
-    or  rax, 1 << 31
+    bts rax, 31
     mov cr0, rax
 
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits

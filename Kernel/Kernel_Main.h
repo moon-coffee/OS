@@ -31,24 +31,17 @@ typedef struct {
     UINTN MemoryMapDescriptorSize;
     UINT32 MemoryMapDescriptorVersion;
 
-    /* FrameBuffer */
     uint64_t FrameBufferBase;
     UINT32 FrameBufferSize;
     UINT32 HorizontalResolution;
     UINT32 VerticalResolution;
     UINT32 PixelsPerScanLine;
 
-    /* Loaded files */
     UINTN LoadedFileCount;
     LOADED_FILE LoadedFiles[MAX_LOADED_FILES];
 } BOOT_INFO;
 
-
 __attribute__((noreturn))
 void kernel_main(BOOT_INFO *boot_info);
-void serial_write_string(const char* str);
-void serial_write_uint64(uint64_t value);
-void serial_write_uint32(uint32_t value);
-void serial_write_uint16(uint16_t value);
 
 #endif

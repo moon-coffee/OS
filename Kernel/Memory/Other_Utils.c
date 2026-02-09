@@ -1,9 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// ===== 簡易ヒープ =====
-static uint8_t *heap_start = (uint8_t*)0x100000; // 1MB
-static uint8_t *heap_end   = (uint8_t*)0x800000; // 8MB
+static uint8_t *heap_end   = (uint8_t*)0x800000;
 static uint8_t *heap_ptr   = (uint8_t*)0x100000;
 
 void* malloc(size_t size) {
@@ -14,10 +12,9 @@ void* malloc(size_t size) {
 }
 
 void free(void* ptr) {
-    (void)ptr; // 簡易版では未対応
+    (void)ptr;
 }
 
-// ===== 標準関数代替 =====
 void* memcpy(void* dst, const void* src, size_t n){
     uint8_t* d = dst;
     const uint8_t* s = src;
@@ -38,7 +35,7 @@ int strncmp(const char* a, const char* b, size_t n){
 }
 
 long strtol(const char *nptr, char **endptr, int base){
-    (void)endptr; (void)base; // 簡易版は10進数のみ
+    (void)endptr; (void)base;
     long val = 0;
     while(*nptr>='0' && *nptr<='9'){
         val = val*10 + (*nptr - '0');

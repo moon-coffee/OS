@@ -2,15 +2,11 @@
 #include <efilib.h>
 #include <stdint.h>
 
-/* ===================== マクロ ===================== */
-
 #define CHECK(st, msg) \
     if (EFI_ERROR(st)) { Print(L"%s: %r\n", msg, st); return st; }
 
 #define EI_NIDENT 16
 #define PT_LOAD   1
-
-/* ===================== BootInfo ===================== */
 
 typedef uint64_t EFI_PHYSICAL_ADDRESS;
 
@@ -27,19 +23,15 @@ typedef struct {
     UINTN MemoryMapDescriptorSize;
     UINT32 MemoryMapDescriptorVersion;
 
-    /* FrameBuffer */
     uint64_t FrameBufferBase;
     UINT32 FrameBufferSize;
     UINT32 HorizontalResolution;
     UINT32 VerticalResolution;
     UINT32 PixelsPerScanLine;
 
-    /* Loaded files */
     UINTN LoadedFileCount;
     LOADED_FILE LoadedFiles[MAX_LOADED_FILES];
 } BOOT_INFO;
-
-/* ===================== ELF 定義 ===================== */
 
 typedef struct {
     unsigned char e_ident[EI_NIDENT];
@@ -68,8 +60,6 @@ typedef struct {
     uint64_t p_memsz;
     uint64_t p_align;
 } Elf64_Phdr;
-
-/* ===================== ファイル読み込み ===================== */
 
 EFI_STATUS LoadFileToMemory(
     EFI_SYSTEM_TABLE *ST,
@@ -126,8 +116,6 @@ EFI_STATUS LoadFileToMemory(
     return Status;
 }
 
-/* ===================== ELF Kernel Loader ===================== */
-
 EFI_STATUS LoadKernelELF(
     EFI_SYSTEM_TABLE *ST,
     VOID *KernelImage,
@@ -183,8 +171,6 @@ EFI_STATUS LoadKernelELF(
     *EntryPoint = Ehdr->e_entry;
     return EFI_SUCCESS;
 }
-
-/* ===================== ExitBootServices 完全版 ===================== */
 
 EFI_STATUS ExitBootServicesComplete(
     EFI_HANDLE ImageHandle,
@@ -258,8 +244,6 @@ EFI_STATUS ExitBootServicesComplete(
     return EFI_SUCCESS;
 }
 
-/* ===================== エントリ ===================== */
-
 typedef void (*KernelEntryFn)(BOOT_INFO*);
 
 EFI_STATUS EFIAPI efi_main(
@@ -284,7 +268,6 @@ EFI_STATUS EFIAPI efi_main(
 
     Print(L"[LOADER] start\n");
 
-    /* LoadedImage */
     Status = uefi_call_wrapper(
         ST->BootServices->HandleProtocol,
         3,
@@ -294,7 +277,6 @@ EFI_STATUS EFIAPI efi_main(
     );
     CHECK(Status, L"LoadedImage");
 
-    /* FileSystem */
     Status = uefi_call_wrapper(
         ST->BootServices->HandleProtocol,
         3,
@@ -312,7 +294,6 @@ EFI_STATUS EFIAPI efi_main(
     );
     CHECK(Status, L"OpenVolume");
 
-    /* GOP */
     Status = uefi_call_wrapper(
         ST->BootServices->LocateProtocol,
         3,
@@ -332,14 +313,13 @@ EFI_STATUS EFIAPI efi_main(
         Gop->Mode->Info->VerticalResolution;
     BootInfo.PixelsPerScanLine =
         Gop->Mode->Info->PixelsPerScanLine;
-
-    /* Kernel ELF */
+        
     Status = uefi_call_wrapper(
         Root->Open,
         5,
         Root,
         &KernelFile,
-        L"\\EFI\\BOOT\\Kernel_Main.ELF",
+        L"\\Kernel\\Kernel_Main.ELF",
         EFI_FILE_MODE_READ,
         0
     );

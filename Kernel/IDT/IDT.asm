@@ -3,10 +3,7 @@ BITS 64
 global load_idt
 global isr_default
 
-extern serial_write_string
-
 SECTION .data
-isr_msg: db "[ISR] Default handler called!", 0x0A, 0
 
 SECTION .text
 
@@ -26,10 +23,10 @@ isr_default:
     push r13
     push r14
     push r15
-    
-    lea rdi, [rel isr_msg]
-    call serial_write_string
-    
+
+    mov al, 0x20
+    out 0x20, al
+
     pop r15
     pop r14
     pop r13
@@ -45,7 +42,7 @@ isr_default:
     pop rcx
     pop rbx
     pop rax
-    
+
     iretq
 
 load_idt:
@@ -53,3 +50,5 @@ load_idt:
     lidt [rdi]
     sti
     ret
+
+section .note.GNU-stack noalloc noexec nowrite progbits

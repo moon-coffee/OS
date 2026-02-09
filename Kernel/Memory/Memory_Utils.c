@@ -1,4 +1,3 @@
-// Kernel/Memory/Memory_Utils.c
 #include <stddef.h>
 #include <stdint.h>
 

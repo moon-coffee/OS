@@ -1,4 +1,5 @@
 #include "Memory_Main.h"
+#include "../Serial.h"
 #include "../Kernel_Main.h"
 #include <stddef.h>
 #include <stdint.h>
@@ -7,6 +8,16 @@
 #define MAX_PAGES 262144
 
 static uint8_t page_bitmap[MAX_PAGES];
+
+extern uint8_t _kernel_end;
+
+enum {
+    EFI_LOADER_CODE          = 1,
+    EFI_LOADER_DATA          = 2,
+    EFI_BOOT_SERVICES_CODE   = 3,
+    EFI_BOOT_SERVICES_DATA   = 4,
+    EFI_CONVENTIONAL_MEMORY  = 7
+};
 
 typedef struct memory_block {
     uint32_t size;
@@ -19,28 +30,63 @@ static uint32_t heap_initialized = 0;
 static uint32_t total_allocated = 0;
 static uint32_t total_freed = 0;
 
-#define HEAP_START_PAGE 256
 #define HEAP_PAGE_COUNT 4096
+
+static uint32_t heap_start_page = 0;
+
+static uint32_t calc_heap_start_page(void) {
+    if (heap_start_page != 0) return heap_start_page;
+    uintptr_t end = (uintptr_t)&_kernel_end;
+    heap_start_page = (uint32_t)((end + PAGE_SIZE - 1) / PAGE_SIZE);
+    return heap_start_page;
+}
+
+static void mark_pages(uint64_t start_page, uint64_t page_count, uint8_t used) {
+    if (start_page >= MAX_PAGES) return;
+    uint64_t end_page = start_page + page_count;
+    if (end_page > MAX_PAGES) end_page = MAX_PAGES;
+    for (uint64_t i = start_page; i < end_page; i++) {
+        page_bitmap[i] = used;
+    }
+}
+
+static int is_usable_memory_type(uint32_t type) {
+    return (type == EFI_LOADER_CODE) ||
+           (type == EFI_LOADER_DATA) ||
+           (type == EFI_BOOT_SERVICES_CODE) ||
+           (type == EFI_BOOT_SERVICES_DATA) ||
+           (type == EFI_CONVENTIONAL_MEMORY);
+}
 
 void init_physical_memory(void *memory_map, size_t map_size, size_t desc_size) {
     serial_write_string("[OS] [Memory] Start Initalize Physical Memory.\n");
-    (void)memory_map;
-    (void)map_size;
-    (void)desc_size;
-    
+
     for (size_t i = 0; i < MAX_PAGES; i++)
-        page_bitmap[i] = 0;
-    
-    for (size_t i = HEAP_START_PAGE; i < HEAP_START_PAGE + HEAP_PAGE_COUNT; i++) {
         page_bitmap[i] = 1;
+
+    if (memory_map != NULL && desc_size != 0) {
+        uint8_t* map = (uint8_t*)memory_map;
+        for (size_t offset = 0; offset + desc_size <= map_size; offset += desc_size) {
+            EFI_MEMORY_DESCRIPTOR* desc = (EFI_MEMORY_DESCRIPTOR*)(map + offset);
+            if (is_usable_memory_type(desc->Type)) {
+                uint64_t start_page = desc->PhysicalStart / PAGE_SIZE;
+                uint64_t page_count = desc->NumberOfPages;
+                mark_pages(start_page, page_count, 0);
+            }
+        }
     }
+
+    uint32_t start_page = calc_heap_start_page();
+    mark_pages(0, (uint64_t)start_page + HEAP_PAGE_COUNT, 1);
+
     serial_write_string("[OS] [Memory] Success Initalize Physical Memory.\n");
 }
 
 void memory_init(void) {
     if (heap_initialized) return;
     
-    heap_start = (memory_block_t*)(HEAP_START_PAGE * PAGE_SIZE);
+    uint32_t start_page = calc_heap_start_page();
+    heap_start = (memory_block_t*)((uintptr_t)start_page * PAGE_SIZE);
     
     heap_start->size = (HEAP_PAGE_COUNT * PAGE_SIZE) - sizeof(memory_block_t);
     heap_start->is_free = 1;
