@@ -49,7 +49,7 @@ isr_default:
     iretq
 
 isr_page_fault:
-    mov rbx, rsp                ; save original stack pointer (error code at top)
+    mov rbx, rsp
 
     push rax
     push rbx
@@ -67,14 +67,13 @@ isr_page_fault:
     push r14
     push r15
 
-    ; args: (error_code, rip, rsp, cr2)
-    mov rdi, [rbx + 0]          ; error code
-    mov rsi, [rbx + 8]          ; RIP
-    mov rdx, [rbx + 32]         ; RSP (user)
+    mov rdi, [rbx + 0]
+    mov rsi, [rbx + 8]
+    mov rdx, [rbx + 32]
     mov rax, cr2
-    mov rcx, rax                ; CR2
+    mov rcx, rax
 
-    sub rsp, 8                  ; align stack to 16 before call
+    sub rsp, 8
     call page_fault_handler
     add rsp, 8
 

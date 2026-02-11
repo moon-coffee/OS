@@ -37,12 +37,18 @@ void init_paging(uint64_t framebuffer_base, uint32_t framebuffer_size) {
     memset(pd, 0, sizeof(pd));
 
     uint64_t fb_end = framebuffer_base + framebuffer_size;
-    uint64_t max_addr = (fb_end > GB) ? fb_end : GB;
+    uint64_t min_required = 4ULL * GB;
+    uint64_t max_addr = (fb_end > min_required) ? fb_end : min_required;
+    
     uint64_t required_entries = (max_addr + GB - 1) / GB;
     if (required_entries > MAX_PDPT_ENTRIES) {
-        serial_write_string("[OS] [Memory] Warning: framebuffer above paging limit.\n");
+        serial_write_string("[OS] [Memory] Warning: mapping limited to MAX_PDPT_ENTRIES.\n");
         required_entries = MAX_PDPT_ENTRIES;
     }
+
+    serial_write_string("[OS] [Memory] Mapping ");
+    serial_write_uint64(required_entries);
+    serial_write_string(" GB of memory.\n");
 
     pml4[0] = ((uint64_t)pdpt) | PAGE_PRESENT | PAGE_RW | PAGE_USER;
 

@@ -54,13 +54,9 @@ static inline void insw(uint16_t port, void* addr, int count){
 
 bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sectors){
     if (sectors == 0) return false;
-    serial_write_string("[OS] [IO] sectors is vaild\n");
+
     for (uint32_t s = 0; s < sectors; s++) {
-        serial_write_string("[OS] [IO] sectors count\n");
-        serial_write_uint32(s);
         uint32_t real_lba = FAT32_START_LBA + lba + s;
-        serial_write_string("[OS] [IO] real_lba\n");
-        serial_write_uint32(real_lba);
 
         outb(ATA_HDDEVSEL, 0xE0 | ((real_lba >> 24) & 0x0F));
         outb(ATA_SECCOUNT, 1);
@@ -68,28 +64,32 @@ bool disk_read(uint32_t lba, uint8_t *buffer, uint32_t sectors){
         outb(ATA_LBA1, (real_lba >> 8) & 0xFF);
         outb(ATA_LBA2, (real_lba >> 16) & 0xFF);
         outb(ATA_COMMAND, ATA_CMD_READ);
-        serial_write_string("[OS] [IO] ATA success\n");
-        uint32_t timeout = 1000000;
+
+        uint32_t timeout = 10000000;
         while (inb(ATA_STATUS) & ATA_SR_BSY) {
-            if (--timeout == 0) return false;
+            if (--timeout == 0) {
+                serial_write_string("[OS] [IO] Timeout waiting for BSY clear\n");
+                return false;
+            }
         }
-        serial_write_string("[OS] [IO] ATA SR Bussy\n");
+
+        timeout = 10000000;
         uint8_t status;
-        timeout = 1000000;
-
         do {
-                status = inb(ATA_STATUS);
-                serial_write_string("[OS] [IO] ATA Status\n");
-                serial_write_uint32(status);
-                if (status & ATA_SR_ERR) return false;
-                if (--timeout == 0) return false;
+            status = inb(ATA_STATUS);
+            if (status & ATA_SR_ERR) {
+                serial_write_string("[OS] [IO] Disk error detected\n");
+                return false;
+            }
+            if (--timeout == 0) {
+                serial_write_string("[OS] [IO] Timeout waiting for DRQ\n");
+                return false;
+            }
         } while (!(status & ATA_SR_DRQ));
-
-
+        
         for (int i = 0; i < 256; i++) {
             ((uint16_t*)buffer)[i] = inw(ATA_DATA);
         }
-        serial_write_string("[OS] [IO] Buffer added 512\n");
         buffer += 512;
     }
     return true;
@@ -108,8 +108,16 @@ bool disk_write(uint32_t lba, const uint8_t *buffer, uint32_t sectors){
         outb(ATA_LBA2, (real_lba >> 16) & 0xFF);
         outb(ATA_COMMAND, 0x30);
 
-        while(inb(ATA_STATUS) & ATA_SR_BSY);
-        while(!(inb(ATA_STATUS) & ATA_SR_DRQ));
+        uint32_t timeout = 10000000;
+        while(inb(ATA_STATUS) & ATA_SR_BSY) {
+            if (--timeout == 0) return false;
+        }
+
+        timeout = 10000000;
+        while(!(inb(ATA_STATUS) & ATA_SR_DRQ)) {
+            if (--timeout == 0) return false;
+        }
+
         outsw(ATA_DATA, buffer, 256);
         buffer += 512;
     }

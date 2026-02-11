@@ -16,17 +16,14 @@ syscall_entry:
     push r10
     push r11
 
-    ; Syscall ABI -> SysV ABI
-    ; rax=num, rdi=arg1, rsi=arg2, rdx=arg3, r10=arg4, r8=arg5, r9=arg6
-    mov r11, rdi        ; save arg1
-    mov rdi, rax        ; num
-    mov rax, rsi        ; save arg2
-    mov rsi, r11        ; arg1
-    mov r11, rdx        ; save arg3
-    mov rdx, rax        ; arg2
-    mov rcx, r11        ; arg3
-    mov r8,  r10        ; arg4
-    ; r9 already arg5
+    mov r11, rdi
+    mov rdi, rax
+    mov rax, rsi
+    mov rsi, r11
+    mov r11, rdx
+    mov rdx, rax
+    mov rcx, r11
+    mov r8,  r10
     call syscall_dispatch
 
     pop r11

@@ -95,6 +95,7 @@ bool fat32_init(void) {
     if (bpb.sectors_per_cluster == 0 || bpb.sectors_per_cluster > 128) return false;
     if (bpb.num_fats == 0 || bpb.num_fats > 2) return false;
     if (bpb.root_cluster < 2) return false;
+    
     serial_write_string("[OS] [FAT32] Init Success\n");
     return true;
 }
@@ -224,27 +225,21 @@ bool fat32_read_file(FAT32_FILE *file, uint8_t *buffer) {
     uint8_t buf[cluster_size];
 
     while (bytes_left) {
-        serial_write_string("[OS] [FAT32] read loop\n");
-        serial_write_string("[OS] [FAT32] cluster\n");
-        serial_write_uint32(cluster);
-        serial_write_string("[OS] [FAT32] bytes_left\n");
-        serial_write_uint32(bytes_left);
         uint32_t lba = cluster_to_lba(cluster);
         if (!lba) return false;
+        
         uint32_t n_read = bytes_left > cluster_size ? cluster_size : bytes_left;
-        serial_write_string("[OS] [FAT32] Disk read start\n");
-        if (!disk_read(lba, buf, bpb.sectors_per_cluster)) return false;
-        serial_write_string("[OS] [FAT32] Disk read success\n");
-        serial_write_string("[OS] [FAT32] memcpy start\n");
+        
+        if (!disk_read(lba, buf, bpb.sectors_per_cluster)) {
+            serial_write_string("[OS] [FAT32] Disk read failed\n");
+            return false;
+        }
+        
         memcpy(buffer, buf, n_read);
-        serial_write_string("[OS] [FAT32] memcpy done\n");
         buffer += n_read;
         bytes_left -= n_read;
 
-        serial_write_string("[OS] [FAT32] get next cluster\n");
         uint32_t next = fat_get_next_cluster(cluster);
-        serial_write_string("[OS] [FAT32] next cluster\n");
-        serial_write_uint32(next);
         if (next < 2 || next >= 0x0FFFFFF8) break;
         cluster = next;
     }

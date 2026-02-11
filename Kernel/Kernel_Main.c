@@ -100,35 +100,35 @@ void all_fs_initialize() {
 
 static bool load_userland_elf(uint64_t *entry_out) {
     FAT32_FILE file;
+    
     if (!fat32_find_file("URLD    ELF", &file)) {
-        serial_write_string("[OS] [USER] File not found\n");
+        serial_write_string("[OS] [USER] File URLD.ELF not found\n");
         return false;
     }
+    
     serial_write_string("[OS] [USER] File found, size: ");
     serial_write_uint32(file.size);
     serial_write_string("\n");
+    
+    if (file.size == 0 || file.size > 1024 * 1024) {
+        serial_write_string("[OS] [USER] Invalid file size\n");
+        return false;
+    }
     
     uint8_t *buffer = (uint8_t*)kmalloc(file.size);
     if (!buffer) {
         serial_write_string("[OS] [USER] Out of memory\n");
         return false;
     }
-    serial_write_string("[OS] [USER] Memory allocated\n");
     
     if (!fat32_read_file(&file, buffer)) {
         serial_write_string("[OS] [USER] File read failed\n");
         kfree(buffer);
         return false;
     }
-    serial_write_string("[OS] [USER] File read success\n");
+    serial_write_string("[OS] [USER] File read successfully\n");
     
     Elf64_Ehdr *ehdr = (Elf64_Ehdr*)buffer;
-    serial_write_string("[OS] [USER] EHDR loaded\n");
-    serial_write_uint32(ehdr->e_ident[0]);
-    serial_write_uint32(ehdr->e_ident[1]);
-    serial_write_uint32(ehdr->e_ident[2]);
-    serial_write_uint32(ehdr->e_ident[3]);
-    serial_write_string("\n");
 
     if (ehdr->e_ident[0] != 0x7F ||
         ehdr->e_ident[1] != 'E' ||
@@ -138,37 +138,43 @@ static bool load_userland_elf(uint64_t *entry_out) {
         kfree(buffer);
         return false;
     }
+    
     serial_write_string("[OS] [USER] Valid ELF header\n");
     serial_write_string("[OS] [USER] Entry point: ");
     serial_write_uint64(ehdr->e_entry);
     serial_write_string("\n");
-    serial_write_string("[OS] [USER] Program headers: ");
-    serial_write_uint16(ehdr->e_phnum);
-    serial_write_string("\n");
 
     Elf64_Phdr *phdrs = (Elf64_Phdr*)(buffer + ehdr->e_phoff);
-    serial_write_string("[OS] [USER] Enter PHDR loop\n");
+    
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
         Elf64_Phdr *ph = &phdrs[i];
         if (ph->p_type != PT_LOAD) continue;
         
         serial_write_string("[OS] [USER] Loading segment ");
         serial_write_uint16(i);
-        serial_write_string(" to ");
+        serial_write_string(" to vaddr ");
         serial_write_uint64(ph->p_vaddr);
+        serial_write_string(", size ");
+        serial_write_uint64(ph->p_memsz);
         serial_write_string("\n");
         
         if (ph->p_memsz < ph->p_filesz) {
-            serial_write_string("[OS] [USER] Bad segment sizes\n");
+            serial_write_string("[OS] [USER] Invalid segment: memsz < filesz\n");
+            kfree(buffer);
+            return false;
+        }
+
+        if (ph->p_vaddr < 0x400000 || ph->p_vaddr >= 0x80000000) {
+            serial_write_string("[OS] [USER] Invalid virtual address\n");
             kfree(buffer);
             return false;
         }
 
         uint8_t *dst = (uint8_t*)(uint64_t)ph->p_vaddr;
         uint8_t *src = buffer + ph->p_offset;
-        serial_write_string("[OS] [USER] memcpy start\n");
+        
         memcpy(dst, src, (size_t)ph->p_filesz);
-        serial_write_string("[OS] [USER] memcpy done\n");
+        
         if (ph->p_memsz > ph->p_filesz) {
             memset(dst + ph->p_filesz, 0, (size_t)(ph->p_memsz - ph->p_filesz));
         }
@@ -186,12 +192,9 @@ void entry_user_mode() {
     serial_write_string("[OS] User entry: ");
     serial_write_uint64(user_entry);
     serial_write_string("\n");
-    serial_write_string("[OS] User stack: ");
-    serial_write_uint64((uint64_t)user_stack + USER_STACK_SIZE);
-    serial_write_string("\n");
 
     uint64_t user_rip = user_entry;
-    uint64_t user_rsp = (uint64_t)user_stack + USER_STACK_SIZE - 16;
+    uint64_t user_rsp = ((uint64_t)user_stack + USER_STACK_SIZE) & ~0xFULL;
     uint64_t rflags   = 0x202;
 
     uint64_t user_ss = GDT_USER_DATA | 3;
@@ -227,7 +230,7 @@ void entry_user_mode() {
 __attribute__((noreturn))
 void kernel_main(BOOT_INFO *boot_info) {
     serial_init();
-    serial_write_string("\n[OS] Kernel starting...\n");
+    serial_write_string("\n[OS] ===== Kernel Starting =====\n");
     
     serial_write_string("[OS] Initializing physical memory...\n");
     init_physical_memory(
@@ -262,20 +265,19 @@ void kernel_main(BOOT_INFO *boot_info) {
 
     serial_write_string("[OS] Initializing file system...\n");
     all_fs_initialize();
-    serial_write_string("[OS] File system initialized\n");
 
     serial_write_string("[OS] Loading userland ELF...\n");
     if (!load_userland_elf(&user_entry)) {
         serial_write_string("[OS] [ERROR] Failed to load userland ELF\n");
+        serial_write_string("[OS] [ERROR] System halted\n");
         while (1) {
             __asm__("hlt");
         }
     }
-    serial_write_string("[OS] [USER] After fat32_read_file\n");
     
-    serial_write_string("[OS] Userland ELF loaded successfully\n");
+    serial_write_string("[OS] ===== Kernel Init Complete =====\n");
+    serial_write_string("[OS] Transferring control to userland...\n\n");
     
     entry_user_mode();
-    serial_write_string("[OS] Userland entry success\n");
     __builtin_unreachable();
 }

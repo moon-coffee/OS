@@ -59,8 +59,8 @@ static int is_usable_memory_type(uint32_t type) {
 }
 
 void init_physical_memory(void *memory_map, size_t map_size, size_t desc_size) {
-    serial_write_string("[OS] [Memory] Start Initalize Physical Memory.\n");
-
+    serial_write_string("[OS] [Memory] Start Initialize Physical Memory.\n");
+    
     for (size_t i = 0; i < MAX_PAGES; i++)
         page_bitmap[i] = 1;
 
@@ -79,11 +79,17 @@ void init_physical_memory(void *memory_map, size_t map_size, size_t desc_size) {
     uint32_t start_page = calc_heap_start_page();
     mark_pages(0, (uint64_t)start_page + HEAP_PAGE_COUNT, 1);
 
-    serial_write_string("[OS] [Memory] Success Initalize Physical Memory.\n");
+    serial_write_string("[OS] [Memory] Physical memory initialized.\n");
+    serial_write_string("[OS] [Memory] Heap will start at page ");
+    serial_write_uint32(start_page);
+    serial_write_string("\n");
 }
 
 void memory_init(void) {
-    if (heap_initialized) return;
+    if (heap_initialized) {
+        serial_write_string("[OS] [Memory] Heap already initialized\n");
+        return;
+    }
     
     uint32_t start_page = calc_heap_start_page();
     heap_start = (memory_block_t*)((uintptr_t)start_page * PAGE_SIZE);
@@ -95,11 +101,18 @@ void memory_init(void) {
     heap_initialized = 1;
     total_allocated = 0;
     total_freed = 0;
+    
+    serial_write_string("[OS] [Memory] Heap initialized at ");
+    serial_write_uint64((uint64_t)heap_start);
+    serial_write_string(" with size ");
+    serial_write_uint32(heap_start->size);
+    serial_write_string(" bytes\n");
 }
 
 void* kmalloc(uint32_t size) {
     if (!heap_initialized) {
-        memory_init();
+        serial_write_string("[OS] [Memory] kmalloc called before heap init!\n");
+        return NULL;
     }
     
     if (size == 0) return NULL;
@@ -129,6 +142,9 @@ void* kmalloc(uint32_t size) {
         current = current->next;
     }
     
+    serial_write_string("[OS] [Memory] kmalloc: Out of memory (requested ");
+    serial_write_uint32(size);
+    serial_write_string(" bytes)\n");
     return NULL;
 }
 
@@ -140,16 +156,21 @@ void kfree(void* ptr) {
     uintptr_t heap_end_addr = heap_start_addr + (HEAP_PAGE_COUNT * PAGE_SIZE);
     
     if (addr < heap_start_addr || addr >= heap_end_addr) {
+        serial_write_string("[OS] [Memory] kfree: Invalid pointer\n");
         return;
     }
     
     memory_block_t* block = (memory_block_t*)((uint8_t*)ptr - sizeof(memory_block_t));
     
-    if (block->is_free) return;
+    if (block->is_free) {
+        serial_write_string("[OS] [Memory] kfree: Double free detected\n");
+        return;
+    }
     
     block->is_free = 1;
     total_freed += block->size;
     
+    // Coalesce adjacent free blocks
     memory_block_t* current = heap_start;
     
     while (current != NULL && current->next != NULL) {
@@ -231,16 +252,32 @@ uint32_t get_used_memory(void) {
 
 void debug_print_memory_info(void) {
     if (!heap_initialized) {
+        serial_write_string("[OS] [Memory] Heap not initialized\n");
         return;
     }
     
     memory_block_t* current = heap_start;
     int block_count = 0;
+    uint32_t free_blocks = 0;
+    uint32_t used_blocks = 0;
     
     while (current != NULL) {
         block_count++;
+        if (current->is_free) {
+            free_blocks++;
+        } else {
+            used_blocks++;
+        }
         current = current->next;
     }
+    
+    serial_write_string("[OS] [Memory] Total blocks: ");
+    serial_write_uint32(block_count);
+    serial_write_string(" (Free: ");
+    serial_write_uint32(free_blocks);
+    serial_write_string(", Used: ");
+    serial_write_uint32(used_blocks);
+    serial_write_string(")\n");
 }
 
 void* alloc_page(void) {
