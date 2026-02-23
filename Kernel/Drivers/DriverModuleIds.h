@@ -1,0 +1,16 @@
+#pragma once
+
+#include <stdint.h>
+
+enum {
+    DRIVER_MODULE_ID_INVALID = 0,
+    DRIVER_MODULE_ID_PCI = 1,
+    DRIVER_MODULE_ID_FAT32 = 2,
+    DRIVER_MODULE_ID_PS2 = 3,
+    DRIVER_MODULE_ID_DISPLAY_VIRTIO = 4,
+    DRIVER_MODULE_ID_DISPLAY_INTEL_UHD_9TH = 5,
+    DRIVER_MODULE_ID_DISPLAY_IMPLUS_DISPLAY_GENERIC_DRIVER = 6,
+    DRIVER_MODULE_ID_MAX = 6
+};
+
+typedef uint32_t driver_module_id_t;
