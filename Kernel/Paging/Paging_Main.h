@@ -20,10 +20,21 @@
 void init_paging(void);
 void *map_mmio_virt(uint64_t phys_addr);
 uint64_t paging_get_kernel_cr3(void);
+uint64_t paging_get_active_cr3(void);
 void paging_switch_cr3(uint64_t cr3);
 uint64_t paging_create_process_space(void);
 void paging_destroy_process_space(uint64_t cr3);
 int paging_set_user_access(uint64_t cr3, uint64_t start, uint64_t size, int enable_user);
+int paging_unmap_range(uint64_t cr3, uint64_t start, uint64_t size);
+int paging_is_user_range_mapped(uint64_t cr3, uint64_t start, uint64_t size);
+int paging_map_user_page(uint64_t cr3,
+                         uint64_t virt_addr,
+                         uint64_t phys_addr,
+                         uint64_t flags);
+int paging_map_user_range_alloc(uint64_t cr3,
+                                uint64_t start,
+                                uint64_t size,
+                                uint64_t flags);
 void *pmm_alloc_pages(size_t num_pages);
 void pmm_free_pages(void *virt, size_t num_pages);
 uint64_t get_phys_base(void);
