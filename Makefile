@@ -274,11 +274,12 @@ __create_esp_iso:
 
 run: image
 	@qemu-system-x86_64 -m 512M \
+  		-machine pc \
   		-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
   		-drive format=raw,file=${IMAGE} \
   		-serial stdio \
-		-vga none \
-		-device virtio-gpu
+  		-vga none \
+  		-device virtio-gpu
 	  	
 clean:
 	@rm -rf $(BUILD_DIR) $(IMAGE_DIR)
