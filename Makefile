@@ -258,6 +258,7 @@ image_esp: all
 	@cp $(PCI_DRIVER_ELF) $(FAT32_DRIVER_ELF) $(PS2_DRIVER_ELF) $(VIRTIO_DRIVER_ELF) $(INTEL_DRIVER_ELF) $(GENERIC_DISPLAY_DRIVER_ELF) $(ISO_ROOT)/Kernel/Driver/
 	@[ -f Kernel/FILE.TXT ] && cp Kernel/FILE.TXT $(ISO_ROOT)/FILE.TXT || true
 	@[ -f Userland/image.png ] && cp Userland/image.png $(ISO_ROOT)/Userland/image.png || true
+	@cp $(ESP_IMG) $(ISO_ROOT)/esp.iso
 	@$(MAKE) __create_esp_iso
 
 __create_esp_iso:
@@ -265,12 +266,16 @@ __create_esp_iso:
 	trap "sudo umount $$ESP_MOUNT 2>/dev/null; rmdir $$ESP_MOUNT 2>/dev/null" EXIT; \
 	dd if=/dev/zero of=$(ESP_IMG) bs=1M count=64 2>/dev/null; \
 	mkfs.fat -F32 $(ESP_IMG) 2>/dev/null; \
-	sudo mount $(ESP_IMG) $$ESP_MOUNT || exit 1; \
+	sync; \
+	sudo mount -o loop $(ESP_IMG) $$ESP_MOUNT || exit 1; \
 	sudo mkdir -p $$ESP_MOUNT/EFI/BOOT; \
 	sudo cp $(BOOTX64_EFI) $$ESP_MOUNT/EFI/BOOT/BOOTX64.EFI; \
 	sync; \
 	sudo umount $$ESP_MOUNT || exit 1; \
-	xorriso -as mkisofs -R -J -V "MY_OS" -o $(IMAGE) -eltorito-alt-boot -e esp.iso -no-emul-boot $(ISO_ROOT) 2>/dev/null;
+	xorriso -as mkisofs -R -J -V "ImplusOS" \
+	-o $(IMAGE) \
+	-eltorito-alt-boot -e esp.iso -no-emul-boot \
+	$(ISO_ROOT)
 
 run: image
 	@qemu-system-x86_64 -m 512M \
