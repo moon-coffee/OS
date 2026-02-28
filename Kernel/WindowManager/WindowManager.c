@@ -1,13 +1,14 @@
 #include "WindowManager.h"
 
 #include "../Drivers/Display/Display_Main.h"
+#include "../KernelConfig.h"
 #include "../Memory/Memory_Main.h"
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
-#define WM_MAX_WINDOWS 16
+#define WM_MAX_WINDOWS WM_MAX_WINDOWS_CONFIG
 
 #define WM_BORDER 2u
 #define WM_TITLEBAR_HEIGHT 20u
@@ -50,6 +51,7 @@ typedef struct {
 
 static wm_window_t g_windows[WM_MAX_WINDOWS];
 static uint32_t g_next_z_order = 1;
+static uint32_t g_window_spawn_count = 0;
 static uint8_t g_initialized = 0;
 
 static int32_t wm_find_window_index_by_pid(int32_t pid)
@@ -99,11 +101,32 @@ static uint32_t wm_max_client_height(uint32_t screen_height)
 static uint32_t wm_take_next_z_order(void)
 {
     if (g_next_z_order == 0) {
-        g_next_z_order = 1;
+        int32_t sorted[WM_MAX_WINDOWS];
+        uint32_t count = 0;
+
         for (int32_t i = 0; i < WM_MAX_WINDOWS; ++i) {
             if (g_windows[i].used) {
-                g_windows[i].z_order = g_next_z_order++;
+                sorted[count++] = i;
             }
+        }
+
+        for (uint32_t i = 0; i < count; ++i) {
+            uint32_t min_idx = i;
+            for (uint32_t j = i + 1; j < count; ++j) {
+                if (g_windows[sorted[j]].z_order < g_windows[sorted[min_idx]].z_order) {
+                    min_idx = j;
+                }
+            }
+            if (min_idx != i) {
+                int32_t tmp = sorted[i];
+                sorted[i] = sorted[min_idx];
+                sorted[min_idx] = tmp;
+            }
+        }
+
+        g_next_z_order = 1;
+        for (uint32_t i = 0; i < count; ++i) {
+            g_windows[sorted[i]].z_order = g_next_z_order++;
         }
     }
 
@@ -163,18 +186,10 @@ static void wm_draw_clipped_rect(int32_t x,
     int32_t x1 = x + (int32_t)w;
     int32_t y1 = y + (int32_t)h;
 
-    if (x0 < 0) {
-        x0 = 0;
-    }
-    if (y0 < 0) {
-        y0 = 0;
-    }
-    if (x1 > (int32_t)screen_w) {
-        x1 = (int32_t)screen_w;
-    }
-    if (y1 > (int32_t)screen_h) {
-        y1 = (int32_t)screen_h;
-    }
+    if (x0 < 0) { x0 = 0; }
+    if (y0 < 0) { y0 = 0; }
+    if (x1 > (int32_t)screen_w) { x1 = (int32_t)screen_w; }
+    if (y1 > (int32_t)screen_h) { y1 = (int32_t)screen_h; }
 
     if (x0 >= x1 || y0 >= y1) {
         return;
@@ -205,28 +220,26 @@ static void wm_draw_vertical_gradient_rect(int32_t x,
     int32_t x1 = x + (int32_t)w;
     int32_t y1 = y + (int32_t)h;
 
-    if (x0 < 0) {
-        x0 = 0;
-    }
-    if (y0 < 0) {
-        y0 = 0;
-    }
-    if (x1 > (int32_t)screen_w) {
-        x1 = (int32_t)screen_w;
-    }
-    if (y1 > (int32_t)screen_h) {
-        y1 = (int32_t)screen_h;
-    }
+    if (x0 < 0) { x0 = 0; }
+    if (y0 < 0) { y0 = 0; }
+    if (x1 > (int32_t)screen_w) { x1 = (int32_t)screen_w; }
+    if (y1 > (int32_t)screen_h) { y1 = (int32_t)screen_h; }
 
     if (x0 >= x1 || y0 >= y1) {
         return;
     }
 
     uint32_t span = (h > 1u) ? (h - 1u) : 1u;
+
     for (int32_t sy = y0; sy < y1; ++sy) {
-        uint32_t pos = (uint32_t)(sy - y);
-        if (pos >= h) {
-            pos = h - 1u;
+        uint32_t pos;
+        if (sy < y) {
+            pos = 0;
+        } else {
+            pos = (uint32_t)(sy - y);
+            if (pos >= h) {
+                pos = h - 1u;
+            }
         }
 
         uint32_t row_color = wm_lerp_color(top_color, bottom_color, pos, span);
@@ -365,20 +378,29 @@ static void wm_compose_window(const wm_window_t *window, uint32_t screen_w, uint
     int32_t client_x = frame_x + (int32_t)WM_BORDER;
     int32_t client_y = frame_y + (int32_t)WM_TITLEBAR_HEIGHT;
 
-    for (uint32_t py = 0; py < window->height; ++py) {
-        int32_t sy = client_y + (int32_t)py;
-        if (sy < 0 || sy >= (int32_t)screen_h) {
-            continue;
-        }
+    int32_t blit_x0 = client_x;
+    int32_t blit_y0 = client_y;
+    int32_t blit_x1 = client_x + (int32_t)window->width;
+    int32_t blit_y1 = client_y + (int32_t)window->height;
 
-        uint64_t row = (uint64_t)py * (uint64_t)window->width;
-        for (uint32_t px = 0; px < window->width; ++px) {
-            int32_t sx = client_x + (int32_t)px;
-            if (sx < 0 || sx >= (int32_t)screen_w) {
-                continue;
+    if (blit_x0 < 0) { blit_x0 = 0; }
+    if (blit_y0 < 0) { blit_y0 = 0; }
+    if (blit_x1 > (int32_t)screen_w) { blit_x1 = (int32_t)screen_w; }
+    if (blit_y1 > (int32_t)screen_h) { blit_y1 = (int32_t)screen_h; }
+
+    if (blit_x0 < blit_x1 && blit_y0 < blit_y1) {
+        uint32_t src_x = (uint32_t)(blit_x0 - client_x);
+        uint32_t src_y = (uint32_t)(blit_y0 - client_y);
+        uint32_t blit_w = (uint32_t)(blit_x1 - blit_x0);
+        uint32_t blit_h = (uint32_t)(blit_y1 - blit_y0);
+
+        for (uint32_t row = 0; row < blit_h; ++row) {
+            uint64_t src_offset = ((uint64_t)(src_y + row)) * window->width + src_x;
+            for (uint32_t col = 0; col < blit_w; ++col) {
+                display_draw_pixel((uint32_t)blit_x0 + col,
+                                   (uint32_t)blit_y0 + row,
+                                   window->pixels[src_offset + col]);
             }
-
-            display_draw_pixel((uint32_t)sx, (uint32_t)sy, window->pixels[row + px]);
         }
     }
 }
@@ -453,7 +475,7 @@ static void wm_fill_pixels(wm_window_t *window, uint32_t color)
     }
 }
 
-static void wm_set_window_position(wm_window_t *window, uint32_t slot, uint32_t screen_w, uint32_t screen_h)
+static void wm_set_window_position(wm_window_t *window, uint32_t screen_w, uint32_t screen_h)
 {
     if (!window) {
         return;
@@ -468,44 +490,30 @@ static void wm_set_window_position(wm_window_t *window, uint32_t slot, uint32_t 
     uint32_t step_x = 24u;
     uint32_t step_y = 20u;
 
-    window->x = (max_x == 0) ? 0 : ((slot * step_x) % (max_x + 1u));
-    window->y = (max_y == 0) ? 0 : ((slot * step_y) % (max_y + 1u));
+    uint32_t spawn = g_window_spawn_count;
+    window->x = (max_x == 0) ? 0 : ((spawn * step_x) % (max_x + 1u));
+    window->y = (max_y == 0) ? 0 : ((spawn * step_y) % (max_y + 1u));
 }
 
-static wm_window_t *wm_ensure_window_for_process(int32_t pid)
+bool window_manager_init(void)
 {
-    int32_t idx = wm_find_window_index_by_pid(pid);
-    if (idx >= 0) {
-        return &g_windows[idx];
+    if (!display_is_ready()) {
+        g_initialized = 0;
+        return false;
     }
 
-    uint32_t screen_w = display_width();
-    uint32_t screen_h = display_height();
-    uint32_t default_w = wm_max_client_width(screen_w);
-    uint32_t default_h = wm_max_client_height(screen_h);
-
-    if (default_w == 0 || default_h == 0) {
-        return NULL;
+    if (display_width() == 0 || display_height() == 0) {
+        g_initialized = 0;
+        return false;
     }
 
-    if (window_manager_create_window_for_process(pid, default_w, default_h) < 0) {
-        return NULL;
-    }
-
-    idx = wm_find_window_index_by_pid(pid);
-    if (idx < 0) {
-        return NULL;
-    }
-
-    return &g_windows[idx];
-}
-
-void window_manager_init(void)
-{
     memset(g_windows, 0, sizeof(g_windows));
     g_next_z_order = 1;
+    g_window_spawn_count = 0;
     g_initialized = 1;
+
     wm_compose_desktop();
+    return true;
 }
 
 int32_t window_manager_create_window_for_process(int32_t pid, uint32_t width, uint32_t height)
@@ -545,7 +553,9 @@ int32_t window_manager_create_window_for_process(int32_t pid, uint32_t width, ui
     uint32_t alloc_size = (uint32_t)(pixel_count * sizeof(uint32_t));
 
     int32_t idx = wm_find_window_index_by_pid(pid);
-    if (idx < 0) {
+    uint8_t is_new = (idx < 0);
+
+    if (is_new) {
         idx = wm_find_free_slot();
         if (idx < 0) {
             return -1;
@@ -553,7 +563,6 @@ int32_t window_manager_create_window_for_process(int32_t pid, uint32_t width, ui
     }
 
     wm_window_t *window = &g_windows[idx];
-    uint8_t was_used = window->used;
 
     uint32_t *new_pixels = window->pixels;
     if (!window->pixels || window->width != width || window->height != height) {
@@ -577,25 +586,25 @@ int32_t window_manager_create_window_for_process(int32_t pid, uint32_t width, ui
     window->dirty = 1;
     window->z_order = wm_take_next_z_order();
 
-    if (!was_used) {
-        wm_set_window_position(window, (uint32_t)idx, screen_w, screen_h);
+    if (is_new) {
+        wm_set_window_position(window, screen_w, screen_h);
+        g_window_spawn_count++;
     }
 
     wm_fill_pixels(window, WM_DEFAULT_CLIENT_BG);
-    wm_compose_desktop();
 
     return idx;
 }
 
-void window_manager_destroy_window_for_process(int32_t pid)
+int32_t window_manager_destroy_window_for_process(int32_t pid)
 {
     if (!g_initialized || pid < 0) {
-        return;
+        return 0;
     }
 
     int32_t idx = wm_find_window_index_by_pid(pid);
     if (idx < 0) {
-        return;
+        return 0;
     }
 
     wm_window_t *window = &g_windows[idx];
@@ -605,12 +614,18 @@ void window_manager_destroy_window_for_process(int32_t pid)
 
     memset(window, 0, sizeof(*window));
     wm_compose_desktop();
+    return 1;
 }
 
 int32_t window_manager_draw_pixel_for_process(int32_t pid, uint32_t x, uint32_t y, uint32_t color)
 {
-    wm_window_t *window = wm_ensure_window_for_process(pid);
-    if (!window || !window->pixels) {
+    int32_t idx = wm_find_window_index_by_pid(pid);
+    if (idx < 0) {
+        return -1;
+    }
+
+    wm_window_t *window = &g_windows[idx];
+    if (!window->pixels) {
         return -1;
     }
 
@@ -630,8 +645,13 @@ int32_t window_manager_fill_rect_for_process(int32_t pid,
                                              uint32_t h,
                                              uint32_t color)
 {
-    wm_window_t *window = wm_ensure_window_for_process(pid);
-    if (!window || !window->pixels) {
+    int32_t idx = wm_find_window_index_by_pid(pid);
+    if (idx < 0) {
+        return -1;
+    }
+
+    wm_window_t *window = &g_windows[idx];
+    if (!window->pixels) {
         return -1;
     }
 
@@ -665,8 +685,13 @@ int32_t window_manager_fill_rect_for_process(int32_t pid,
 
 int32_t window_manager_present_for_process(int32_t pid)
 {
-    wm_window_t *window = wm_ensure_window_for_process(pid);
-    if (!window || !window->pixels) {
+    int32_t idx = wm_find_window_index_by_pid(pid);
+    if (idx < 0) {
+        return -1;
+    }
+
+    wm_window_t *window = &g_windows[idx];
+    if (!window->pixels) {
         return -1;
     }
 

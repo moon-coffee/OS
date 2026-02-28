@@ -4,12 +4,16 @@ global load_idt
 global isr_default
 global isr_page_fault
 global isr_double_fault
+global isr_nmi
+global isr_general_protection
+global isr_machine_check
 global page_fault_resume_user
 
 extern double_fault_handler
+extern nmi_handler
+extern general_protection_fault_handler
+extern machine_check_handler
 extern page_fault_handler
-
-SECTION .data
 
 SECTION .text
 
@@ -53,21 +57,62 @@ isr_default:
 
 isr_page_fault:
     cli
-
-    mov rdi, [rsp]
-    mov rsi, [rsp + 8]
-    mov rdx, rsp
+    mov rdi, [rsp]       ; error_code
+    mov rsi, [rsp + 8]   ; rip
+    mov rdx, rsp         ; fault stack pointer
     mov rcx, cr2
-
+    mov r8, rbp
     call page_fault_handler
+    test eax, eax
+    jz .pf_resume
 .pf_hang:
     hlt
     jmp .pf_hang
+.pf_resume:
+    add rsp, 8
+    iretq
 
 isr_double_fault:
     cli
-    mov rdi, rsp
+    mov rdi, [rsp]       ; error_code
+    mov rsi, [rsp + 8]   ; rip
+    mov rdx, rsp         ; fault stack pointer
+    mov rcx, rbp
     call double_fault_handler
+.df_hang:
+    hlt
+    jmp .df_hang
+
+isr_nmi:
+    cli
+    mov rdi, [rsp]       ; rip
+    mov rsi, rsp         ; fault stack pointer
+    mov rdx, rbp
+    call nmi_handler
+.nmi_hang:
+    hlt
+    jmp .nmi_hang
+
+isr_general_protection:
+    cli
+    mov rdi, [rsp]       ; error_code
+    mov rsi, [rsp + 8]   ; rip
+    mov rdx, rsp         ; fault stack pointer
+    mov rcx, rbp
+    call general_protection_fault_handler
+.gp_hang:
+    hlt
+    jmp .gp_hang
+
+isr_machine_check:
+    cli
+    mov rdi, [rsp]       ; rip
+    mov rsi, rsp         ; fault stack pointer
+    mov rdx, rbp
+    call machine_check_handler
+.mce_hang:
+    hlt
+    jmp .mce_hang
 
 page_fault_resume_user:
     mov r10, rsi

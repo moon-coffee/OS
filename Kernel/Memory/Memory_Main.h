@@ -19,5 +19,7 @@ void free_contiguous_pages(void* addr, uint32_t page_count);
 
 uint32_t get_free_memory(void);
 uint32_t get_used_memory(void);
+void memory_dump_virtual(const void *addr, uint32_t bytes);
+void memory_dump_physical(uint64_t phys_addr, uint32_t bytes);
 
 #endif

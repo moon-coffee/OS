@@ -1,6 +1,7 @@
 #ifndef PS2_INPUT_H
 #define PS2_INPUT_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #define PS2_KBD_MOD_SHIFT (1u << 0)
@@ -25,13 +26,13 @@ typedef struct __attribute__((packed)) {
 } ps2_mouse_event_t;
 
 typedef struct {
-    void (*init)(void);
+    bool (*init)(void);
     void (*poll)(void);
     int32_t (*read_keyboard)(ps2_keyboard_event_t *out_event);
     int32_t (*read_mouse)(ps2_mouse_event_t *out_event);
 } ps2_input_driver_t;
 
-void ps2_input_init(void);
+bool ps2_input_init(void);
 void ps2_input_poll(void);
 int32_t ps2_input_read_keyboard(ps2_keyboard_event_t *out_event);
 int32_t ps2_input_read_mouse(ps2_mouse_event_t *out_event);

@@ -1,18 +1,37 @@
-# ImplusOS | Important information
+# ImplusOS | Important Information
 
-## First things first
+## First Things First
 - This repository may be deleted or made private in the future.
-- We do not support damage to hardware or software.
-- You are responsible for any damage that may occur (this is OSS after all).
+- Damage to hardware or software is not supported.
+- You are responsible for any resulting damage.
 
-## About operation
-- Operation has been confirmed only with QEMU (check the Makefile for details).
-- Operation on actual devices is not guaranteed. Since it is UEFI, there is a possibility that it will boot.
-- The only drivers listed in the ReadMe are the ones listed in the ReadMe.
+## Current Feature Set
+- UEFI bootloader path.
+- Process manager and syscall dispatch.
+- FAT32 file I/O syscall backend.
+- PS/2 keyboard and mouse input path.
+- Window manager drawing syscalls.
+- PNG decoder user application sample.
+- Display drivers: VirtIO GPU, Intel UHD Graphics 9th, generic framebuffer path.
+
+## Current Constraints
+- Verified operation is centered on QEMU + OVMF.
+- Operation on physical hardware is not guaranteed.
+- USB / network / audio drivers are not yet integrated.
+
+## Syscall Error Handling
+- Kernel APIs return `os_status_t` values.
+- Negative return values are failures.
+- Userland wrappers keep return values and update `os_errno`.
+- Mapping table: `Docs/Architecture/Status_Codes.md`.
+
+## Documentation Map
+- Architecture overview: `Docs/Architecture/Kernel_Architecture.md`
+- Config guide: `Docs/Architecture/Kernel_Config_Guide.md`
+- Status code table: `Docs/Architecture/Status_Codes.md`
+- API generation: `doxygen Doxyfile`
 
 ## License
-- Follow the MIT License. This is the license for this repository.
-- After distribution, we will not provide support for any reason (according to the MIT license).
-- After agreeing to the license, you can freely use, modify, and redistribute. Feel free to boil or bake it.
-
-thank you very much.
+- Follow the MIT License.
+- No support is provided after distribution.
+- You may use, modify, and redistribute under MIT terms.

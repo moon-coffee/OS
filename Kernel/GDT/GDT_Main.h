@@ -47,3 +47,4 @@ struct __attribute__((packed)) TSS {
 
 void init_gdt(void);
 void gdt_set_kernel_rsp0(uint64_t rsp0);
+void gdt_set_ist(uint8_t ist_index, uint64_t rsp);

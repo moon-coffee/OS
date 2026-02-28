@@ -492,7 +492,7 @@ static void handle_mouse_byte(uint8_t value)
     g_last_mouse_buttons = buttons;
 }
 
-void ps2_input_init(void)
+bool ps2_input_init(void)
 {
     uint8_t config = 0;
     int port1_ok = 0;
@@ -515,14 +515,14 @@ void ps2_input_init(void)
 
     if (controller_read_config(&config) < 0) {
         serial_write_string("[OS] [PS2] Failed to read controller config\n");
-        return;
+        return false;
     }
 
     config &= (uint8_t)~(PS2_CONFIG_IRQ_PORT1 | PS2_CONFIG_IRQ_PORT2);
     config |= PS2_CONFIG_TRANSLATION;
     if (controller_write_config(config) < 0) {
         serial_write_string("[OS] [PS2] Failed to write controller config\n");
-        return;
+        return false;
     }
 
     if (controller_write_command(PS2_CMD_SELF_TEST) == 0) {
@@ -559,11 +559,12 @@ void ps2_input_init(void)
 
     if (!port1_ok && !g_mouse_available) {
         serial_write_string("[OS] [PS2] No PS/2 keyboard/mouse detected\n");
-        return;
+        return false;
     }
 
     g_input_initialized = 1;
     serial_write_string("[OS] [PS2] Input ready (poll mode)\n");
+    return true;
 }
 
 void ps2_input_poll(void)
@@ -711,14 +712,19 @@ static const ps2_input_driver_t g_ps2_input_driver = {
 
 const ps2_input_driver_t *driver_module_init(const driver_kernel_api_t *api)
 {
-    if (api == NULL ||
-        api->inb == NULL ||
-        api->outb == NULL ||
-        api->serial_write_string == NULL) {
+    if (api == NULL || api->inb == NULL || api->outb == NULL) {
         return NULL;
     }
 
     g_driver_api = api;
+
+    if (g_driver_api->serial_write_string == NULL) {
+        g_driver_api = api;
+        #define serial_write_string fallback_serial_write_string
+    } else {
+        #define serial_write_string g_driver_api->serial_write_string
+    }
+
     return &g_ps2_input_driver;
 }
 #endif

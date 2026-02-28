@@ -24,6 +24,7 @@ typedef void(*isr_t)(void);
 void register_interrupt_handler(uint16_t irq, isr_t handler);
 void init_idt(void);
 void set_interrupt_handler(uint16_t n, void (*handler)(void));
+void set_interrupt_handler_with_ist(uint16_t n, void (*handler)(void), uint8_t ist);
 
 extern void load_idt(IDT_Ptr*);
 

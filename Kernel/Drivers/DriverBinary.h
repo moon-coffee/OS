@@ -8,6 +8,7 @@
 #include "PCI/PCI_Main.h"
 #include "FileSystem/FAT32/FAT32_Main.h"
 #include "PS2/PS2_Input.h"
+#include "Display/ImplusOS_Generic/ImplusOS_Generic.h"
 
 typedef struct {
     void (*serial_write_char)(char value);

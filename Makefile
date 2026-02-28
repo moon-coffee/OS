@@ -30,7 +30,8 @@ KERNEL_CFLAGS := \
 	-IKernel -IThirdParty \
 	-ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
 	-mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
-	-Wall -Wextra -MMD -MP
+	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
+	-MMD -MP
 
 KERNEL_LDFLAGS := -T Kernel/Kernel_Main.ld -nostdlib --build-id=none
 
@@ -47,7 +48,8 @@ USERLAND_APP_LDFLAGS := -T Userland/Application/SystemApps/UserApp.ld -nostdlib 
 USERLAND_CFLAGS := \
 	-ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
 	-mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
-	-Wall -Wextra -MMD -MP
+	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
+	-MMD -MP
 
 USERLAND_CXXFLAGS := \
 	-ffreestanding -fno-stack-protector -fno-pic -fno-builtin \
@@ -59,7 +61,8 @@ DRIVER_MODULE_CFLAGS := \
 	-IKernel -IThirdParty \
 	-ffreestanding -fno-stack-protector -fPIC -fno-builtin \
 	-mno-red-zone -nostdlib -nostartfiles -nodefaultlibs \
-	-Wall -Wextra -MMD -MP \
+	-Wall -Wextra -Wtype-limits -Wconversion -Wsign-conversion -Wshadow \
+	-MMD -MP \
 	-DIMPLUS_DRIVER_MODULE
 DRIVER_MODULE_LDFLAGS := -nostdlib -shared -Wl,--build-id=none -Wl,-Bsymbolic -Wl,-e,driver_module_init
 
@@ -69,6 +72,7 @@ KERNEL_C_SRCS := \
 	Kernel/Memory/Other_Utils.c \
 	Kernel/Memory/DMA_Memory.c \
 	Kernel/Paging/Paging_Main.c \
+	Kernel/SMP/SMP_Main.c \
 	Kernel/IDT/IDT_Main.c \
 	Kernel/IO/IO_Main.c \
 	Kernel/GDT/GDT_Main.c \
@@ -77,6 +81,7 @@ KERNEL_C_SRCS := \
 	Kernel/Drivers/FileSystem/FAT32/FAT32_Client.c \
 	Kernel/Drivers/DriverSelect.c \
 	Kernel/Drivers/Display/Display_Main.c \
+	Kernel/Drivers/Display/ImplusOS_Generic/ImplusOS_Generic.c \
 	Kernel/Drivers/PS2/PS2_Client.c \
 	Kernel/Drivers/PCI/PCI_Client.c \
 	Kernel/ProcessManager/ProcessManager_Create.c \
@@ -269,9 +274,11 @@ __create_esp_iso:
 
 run: image
 	@qemu-system-x86_64 -m 512M \
-		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
-		-drive format=raw,file=$(IMAGE) \
-		-serial stdio
+  		-drive if=pflash,format=raw,readonly=on,file=${OVMF_CODE} \
+  		-drive format=raw,file=${IMAGE} \
+  		-serial stdio \
+		-vga none \
+		-device virtio-gpu
 
 clean:
 	@rm -rf $(BUILD_DIR) $(IMAGE_DIR)

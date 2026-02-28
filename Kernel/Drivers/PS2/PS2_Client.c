@@ -14,6 +14,19 @@ static const ps2_input_driver_t *g_ps2_driver = NULL;
 static uint8_t g_ps2_load_attempted = 0;
 static uint8_t g_ps2_initialized = 0;
 
+static void log_ps2_driver_status(const char *severity,
+                                  const char *stage,
+                                  const char *detail)
+{
+    serial_write_string("[OS] [DRIVER] [");
+    serial_write_string(severity);
+    serial_write_string("] subsystem=PS2 stage=");
+    serial_write_string(stage);
+    serial_write_string(" detail=");
+    serial_write_string(detail);
+    serial_write_string("\n");
+}
+
 static bool ensure_ps2_driver_loaded(void)
 {
     if (g_ps2_driver != NULL) {
@@ -30,7 +43,7 @@ static bool ensure_ps2_driver_loaded(void)
                                     PS2_DRIVER_MAX_FILE_SIZE,
                                     PS2_DRIVER_MAX_IMAGE_SIZE,
                                     &entry)) {
-        serial_write_string("[OS] [PS2] Failed to load PS/2 module\n");
+        log_ps2_driver_status("NONFATAL", "module_load", "PS2_Driver.ELF");
         return false;
     }
 
@@ -43,7 +56,7 @@ static bool ensure_ps2_driver_loaded(void)
         driver->poll == NULL ||
         driver->read_keyboard == NULL ||
         driver->read_mouse == NULL) {
-        serial_write_string("[OS] [PS2] PS/2 module init failed\n");
+        log_ps2_driver_status("NONFATAL", "module_init", "invalid_api");
         return false;
     }
 
@@ -57,15 +70,19 @@ static bool ensure_ps2_initialized(void)
         return false;
     }
     if (!g_ps2_initialized) {
-        g_ps2_driver->init();
+        if (!g_ps2_driver->init()) {
+            log_ps2_driver_status("NONFATAL", "driver_init", "no_ps2_devices");
+            return false;
+        }
         g_ps2_initialized = 1;
+        log_ps2_driver_status("INFO", "driver_init", "ready");
     }
     return true;
 }
 
-void ps2_input_init(void)
+bool ps2_input_init(void)
 {
-    (void)ensure_ps2_initialized();
+    return ensure_ps2_initialized();
 }
 
 void ps2_input_poll(void)

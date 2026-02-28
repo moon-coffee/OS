@@ -1,0 +1,21 @@
+PROJECT_NAME           = "ImplusOS"
+PROJECT_NUMBER         = "dev"
+OUTPUT_DIRECTORY       = Docs/Generated
+CREATE_SUBDIRS         = NO
+
+INPUT                  = README.md Docs/Architecture Kernel Userland BootLoader
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.c *.cpp *.asm *.md
+
+EXTRACT_ALL            = YES
+EXTRACT_PRIVATE        = NO
+EXTRACT_STATIC         = YES
+SOURCE_BROWSER         = YES
+INLINE_SOURCES         = NO
+
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+GENERATE_XML           = NO
+
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = NO

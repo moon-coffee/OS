@@ -136,27 +136,27 @@ bool generic_fb_set(const display_boot_framebuffer_t *framebuffer) {
     return true;
 }
 
-static bool fb_probe(void) {
+bool fb_probe(void) {
     return g_ready != 0;
 }
 
-static bool fb_init(void) {
+bool fb_init(void) {
     return g_ready != 0;
 }
 
-static bool fb_is_ready(void) {
+bool fb_is_ready(void) {
     return g_ready != 0;
 }
 
-static uint32_t fb_width(void) {
+uint32_t fb_width(void) {
     return g_fb.width;
 }
 
-static uint32_t fb_height(void) {
+uint32_t fb_height(void) {
     return g_fb.height;
 }
 
-static void fb_draw_pixel(uint32_t x, uint32_t y, uint32_t color) {
+void fb_draw_pixel(uint32_t x, uint32_t y, uint32_t color) {
     if (!g_ready) return;
     if (x >= g_fb.width || y >= g_fb.height) return;
 
@@ -168,7 +168,7 @@ static void fb_draw_pixel(uint32_t x, uint32_t y, uint32_t color) {
     *dst = color;
 }
 
-static void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
+void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_t color) {
     if (!g_ready || w == 0 || h == 0) return;
     if (x >= g_fb.width || y >= g_fb.height) return;
 
@@ -209,7 +209,7 @@ static void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h, uint32_
     }
 }
 
-static void fb_present(void) {
+void fb_present(void) {
 }
 
 static const display_driver_t g_generic_fb_driver = {

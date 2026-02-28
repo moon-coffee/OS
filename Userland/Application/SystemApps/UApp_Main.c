@@ -6,8 +6,36 @@
 extern void* kmalloc(uint32_t size);
 extern void kfree(void* ptr);
 
+#define APP_FILE_READ_CHUNK       4096U
+#define APP_FILE_INITIAL_CAPACITY 4096U
+#define APP_SCREEN_WIDTH          640U
+#define APP_SCREEN_HEIGHT         480U
+
+static uint8_t *grow_file_buffer(const uint8_t *current,
+                                 uint32_t used_size,
+                                 uint32_t new_capacity)
+{
+    uint8_t *next = (uint8_t *)kmalloc(new_capacity);
+    if (next == NULL) {
+        return NULL;
+    }
+
+    if (current != NULL && used_size > 0U) {
+        memcpy(next, current, used_size);
+    }
+
+    if (current != NULL) {
+        kfree((void *)current);
+    }
+    return next;
+}
+
 uint8_t* load_file(const char* filename, uint32_t* out_size)
 {
+    if (filename == NULL || out_size == NULL) {
+        return NULL;
+    }
+
     int32_t fd = file_open(filename, 0);
     if (fd < 0) {
         serial_write_string("[APP] Failed to open file: ");
@@ -16,31 +44,66 @@ uint8_t* load_file(const char* filename, uint32_t* out_size)
         return NULL;
     }
 
-    int32_t file_size = file_seek(fd, 0, 2);
-    if (file_size < 0) {
-        file_close(fd);
-        return NULL;
+    uint8_t *buffer = NULL;
+    uint32_t capacity = 0;
+    uint32_t total_size = 0;
+    uint8_t chunk[APP_FILE_READ_CHUNK];
+
+    while (1) {
+        int32_t read_size = (int32_t)file_read(fd, chunk, APP_FILE_READ_CHUNK);
+        if (read_size < 0) {
+            serial_write_string("[APP] File read failed\n");
+            if (buffer != NULL) {
+                kfree(buffer);
+            }
+            file_close(fd);
+            return NULL;
+        }
+        if (read_size == 0) {
+            break;
+        }
+
+        uint32_t read_u32 = (uint32_t)read_size;
+        uint32_t needed = total_size + read_u32;
+        if (needed < total_size) {
+            serial_write_string("[APP] File too large\n");
+            if (buffer != NULL) {
+                kfree(buffer);
+            }
+            file_close(fd);
+            return NULL;
+        }
+
+        if (needed > capacity) {
+            uint32_t next_capacity = (capacity == 0U) ? APP_FILE_INITIAL_CAPACITY : capacity;
+            while (next_capacity < needed) {
+                uint32_t doubled = next_capacity * 2U;
+                if (doubled <= next_capacity) {
+                    next_capacity = needed;
+                    break;
+                }
+                next_capacity = doubled;
+            }
+
+            uint8_t *next_buffer = grow_file_buffer(buffer, total_size, next_capacity);
+            if (next_buffer == NULL) {
+                serial_write_string("[APP] Memory allocation failed\n");
+                if (buffer != NULL) {
+                    kfree(buffer);
+                }
+                file_close(fd);
+                return NULL;
+            }
+            buffer = next_buffer;
+            capacity = next_capacity;
+        }
+
+        memcpy(buffer + total_size, chunk, read_u32);
+        total_size += read_u32;
     }
 
-    file_seek(fd, 0, 0);
-
-    uint8_t* buffer = kmalloc((uint32_t)file_size);
-    if (!buffer) {
-        serial_write_string("[APP] Memory allocation failed\n");
-        file_close(fd);
-        return NULL;
-    }
-
-    int32_t read_size = file_read(fd, buffer, (uint32_t)file_size);
     file_close(fd);
-
-    if (read_size != file_size) {
-        serial_write_string("[APP] File read failed\n");
-        kfree(buffer);
-        return NULL;
-    }
-
-    *out_size = (uint32_t)file_size;
+    *out_size = total_size;
     return buffer;
 }
 
@@ -58,7 +121,7 @@ void draw_png_image(uint32_t* image_data, uint32_t width, uint32_t height,
             uint32_t fb_x = offset_x + x;
             uint32_t fb_y = offset_y + y;
             
-            if (fb_x >= 640 || fb_y >= 480) {
+            if (fb_x >= APP_SCREEN_WIDTH || fb_y >= APP_SCREEN_HEIGHT) {
                 continue;
             }
 
@@ -78,7 +141,7 @@ void _start(void)
     int32_t cursor_y = 12;
     uint8_t mouse_buttons = 0;
 
-    draw_fill_rect(0, 0, 640, 480, 0xFFFFFFFFu);
+    draw_fill_rect(0, 0, APP_SCREEN_WIDTH, APP_SCREEN_HEIGHT, 0xFFFFFFFFu);
 
     uint32_t file_size = 0;
     uint8_t* png_file_data = load_file("LOGO.PNG", &file_size);
@@ -128,7 +191,7 @@ void _start(void)
                 if (key_event.ascii == 'r' || key_event.ascii == 'R') {
                     cursor_x = 12;
                     cursor_y = 12;
-                    draw_fill_rect(0, 0, 640, 480, 0xFFFFFFFFu);
+                    draw_fill_rect(0, 0, APP_SCREEN_WIDTH, APP_SCREEN_HEIGHT, 0xFFFFFFFFu);
                 } else if (key_event.ascii == 'q' || key_event.ascii == 'Q') {
                     if (decoded_image) {
                         kfree(decoded_image);

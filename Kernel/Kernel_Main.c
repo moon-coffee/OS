@@ -1,6 +1,7 @@
 #include "Kernel_Main.h"
 #include "Memory/Memory_Main.h"
 #include "Paging/Paging_Main.h"
+#include "SMP/SMP_Main.h"
 #include "IDT/IDT_Main.h"
 #include "GDT/GDT_Main.h"
 #include "IO/IO_Main.h"
@@ -15,6 +16,8 @@
 #include "ProcessManager/ProcessManager.h"
 #include "WindowManager/WindowManager.h"
 #include "Serial.h"
+
+#include <stdbool.h>
 
 #define COM1_PORT 0x3F8
 
@@ -138,6 +141,9 @@ void kernel_main(BOOT_INFO *boot_info) {
     serial_write_string("[OS] Initializing paging...\n");
     init_paging();
 
+    serial_write_string("[OS] Initializing SMP...\n");
+    smp_init();
+
     serial_write_string("[OS] Initializing memory manager...\n");
     memory_init();
 
@@ -150,13 +156,21 @@ void kernel_main(BOOT_INFO *boot_info) {
     serial_write_string("[OS] Initializing file system...\n");
     all_fs_initialize();
 
+    bool display_ready = false;
+    bool ps2_ready = false;
+    bool window_manager_ready = false;
+
     serial_write_string("[OS] Initializing display...\n");
-    if (!display_init()) {
-        serial_write_string("[OS] [WARN] Display init failed\n");
+    display_ready = display_init();
+    if (!display_ready) {
+        serial_write_string("[OS] [WARN] Display unavailable. Running in headless mode.\n");
     }
 
     serial_write_string("[OS] Initializing PS/2 input...\n");
-    ps2_input_init();
+    ps2_ready = ps2_input_init();
+    if (!ps2_ready) {
+        serial_write_string("[OS] [WARN] PS/2 input unavailable. Input syscalls will be idle.\n");
+    }
     
     serial_write_string("[OS] Initializing syscall...\n");
     syscall_init(); 
@@ -164,8 +178,15 @@ void kernel_main(BOOT_INFO *boot_info) {
     serial_write_string("[OS] Initializing process manager...\n");
     process_manager_init();
 
-    serial_write_string("[OS] Initializing window manager...\n");
-    window_manager_init();
+    if (display_ready) {
+        serial_write_string("[OS] Initializing window manager...\n");
+        window_manager_ready = window_manager_init();
+        if (!window_manager_ready) {
+            serial_write_string("[OS] [WARN] Window manager init failed. GUI syscalls disabled.\n");
+        }
+    } else {
+        serial_write_string("[OS] [WARN] Window manager skipped (display dependency not ready).\n");
+    }
 
     syscall_file_init();
 

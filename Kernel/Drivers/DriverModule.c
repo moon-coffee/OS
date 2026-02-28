@@ -56,7 +56,7 @@ void driver_module_manager_init(const BOOT_INFO *boot_info)
         g_modules[i].entry = 0;
     }
 
-    if (boot_info == NULL) {
+    if (boot_info == NULL || boot_info->LoadedFiles == NULL) {
         serial_write_string("[OS] [DRIVER] BOOT_INFO missing for module manager\n");
         return;
     }

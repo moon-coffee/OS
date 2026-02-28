@@ -1,5 +1,8 @@
 #include "GDT_Main.h"
+#include "../SMP/SMP_Main.h"
 #include "../Serial.h"
+
+#define GDT_MAX_CPUS 4
 
 static struct {
     struct GDTEntry  null;
@@ -12,11 +15,18 @@ static struct {
 } __attribute__((packed)) gdt;
 
 static struct GDTR gdtr;
-static struct TSS tss;
+static struct TSS g_tss[GDT_MAX_CPUS];
 
-static uint8_t kernel_stack[4096 * 4];
+static uint8_t kernel_stack[GDT_MAX_CPUS][4096 * 4];
+static uint8_t df_ist_stack[GDT_MAX_CPUS][4096 * 2];
+static uint8_t nmi_ist_stack[GDT_MAX_CPUS][4096 * 2];
 extern void gdt_flush(uint64_t);
 extern void tss_flush(uint16_t);
+
+static inline uint32_t gdt_current_cpu_id(void)
+{
+    return smp_get_current_cpu_id();
+}
 
 static struct GDTEntry make_gdt_entry(uint32_t limit, uint8_t access, uint8_t flags) {
     struct GDTEntry e = {0};
@@ -28,6 +38,12 @@ static struct GDTEntry make_gdt_entry(uint32_t limit, uint8_t access, uint8_t fl
 
 void init_gdt(void) {
     serial_write_string("[OS] [GDT] Start Initialize GDT.\n");
+    uint32_t cpu_id = gdt_current_cpu_id();
+    if (cpu_id >= GDT_MAX_CPUS) {
+        cpu_id = 0;
+    }
+    struct TSS *tss = &g_tss[cpu_id];
+
     gdt.null = make_gdt_entry(0, 0, 0);
 
     gdt.kernel_code = make_gdt_entry(0xFFFFF, 0x9A, 0xA0);
@@ -37,7 +53,7 @@ void init_gdt(void) {
     gdt.user_data = make_gdt_entry(0xFFFFF, 0xF2, 0x80);
     gdt.user_code = make_gdt_entry(0xFFFFF, 0xFA, 0xA0);
 
-    uint64_t tss_base = (uint64_t)&tss;
+    uint64_t tss_base = (uint64_t)tss;
     uint32_t tss_limit = sizeof(struct TSS) - 1;
 
     gdt.tss.limit_low  = tss_limit & 0xFFFF;
@@ -49,9 +65,20 @@ void init_gdt(void) {
     gdt.tss.base_upper = (tss_base >> 32);
     gdt.tss.reserved   = 0;
 
-    for (int i = 0; i < 7; i++) tss.ist[i] = 0;
-    tss.rsp0 = (uint64_t)(kernel_stack + sizeof(kernel_stack));
-    tss.io_map_base = sizeof(struct TSS);
+    tss->reserved0 = 0;
+    tss->rsp0 = 0;
+    tss->rsp1 = 0;
+    tss->rsp2 = 0;
+    tss->reserved1 = 0;
+    tss->reserved2 = 0;
+    tss->reserved3 = 0;
+    for (int i = 0; i < 7; i++) {
+        tss->ist[i] = 0;
+    }
+    tss->rsp0 = (uint64_t)(kernel_stack[cpu_id] + sizeof(kernel_stack[cpu_id]));
+    gdt_set_ist(1, (uint64_t)(uintptr_t)(df_ist_stack[cpu_id] + sizeof(df_ist_stack[cpu_id])));
+    gdt_set_ist(2, (uint64_t)(uintptr_t)(nmi_ist_stack[cpu_id] + sizeof(nmi_ist_stack[cpu_id])));
+    tss->io_map_base = sizeof(struct TSS);
 
     gdtr.limit = sizeof(gdt) - 1;
     gdtr.base  = (uint64_t)&gdt;
@@ -63,5 +90,21 @@ void init_gdt(void) {
 
 void gdt_set_kernel_rsp0(uint64_t rsp0)
 {
-    tss.rsp0 = rsp0 & ~0xFULL;
+    uint32_t cpu_id = gdt_current_cpu_id();
+    if (cpu_id >= GDT_MAX_CPUS) {
+        cpu_id = 0;
+    }
+    g_tss[cpu_id].rsp0 = rsp0 & ~0xFULL;
+}
+
+void gdt_set_ist(uint8_t ist_index, uint64_t rsp)
+{
+    if (ist_index == 0 || ist_index > 7) {
+        return;
+    }
+    uint32_t cpu_id = gdt_current_cpu_id();
+    if (cpu_id >= GDT_MAX_CPUS) {
+        cpu_id = 0;
+    }
+    g_tss[cpu_id].ist[ist_index - 1] = rsp & ~0xFULL;
 }

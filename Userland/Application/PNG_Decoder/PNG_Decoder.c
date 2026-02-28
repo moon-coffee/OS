@@ -577,6 +577,9 @@ static int png_copy_idat(const uint8_t* buffer, uint64_t size,
             png_set_status(PNG_DECODE_ERR_TRUNCATED_CHUNK); return 0;
         }
         if (type == PNG_CHUNK_IDAT) {
+            if (len > out_size || written > out_size - len) {
+                png_set_status(PNG_DECODE_ERR_SIZE_OVERFLOW); return 0;
+            }
             if ((uint64_t)written + (uint64_t)len > (uint64_t)out_size) {
                 png_set_status(PNG_DECODE_ERR_SIZE_OVERFLOW); return 0;
             }
@@ -685,6 +688,11 @@ static uint8_t* zlib_decompress_png(const uint8_t* data, uint32_t size,
     }
 
     uint32_t decomp_size = expected_size;
+    
+    if (decomp_size == 0 || decomp_size > (1024u * 1024u * 256u)) {
+        png_set_status(PNG_DECODE_ERR_SIZE_OVERFLOW); return NULL;
+    }
+    
     uint8_t* out = kmalloc(decomp_size);
     if (!out) { png_set_status(PNG_DECODE_ERR_OOM); return NULL; }
 

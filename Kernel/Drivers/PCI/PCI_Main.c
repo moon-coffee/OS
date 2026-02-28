@@ -1,6 +1,7 @@
 #include "PCI_Main.h"
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef IMPLUS_DRIVER_MODULE
 #include "../DriverBinary.h"

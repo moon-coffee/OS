@@ -5,6 +5,7 @@
 #include "DriverBinary.h"
 #include "DriverModule.h"
 #include "../Serial.h"
+#include "Display/ImplusOS_Generic/ImplusOS_Generic.h"
 
 #define MAX_DISPLAY_DRIVERS 8
 #define DISPLAY_DRIVER_MODULE_MAX_SIZE (2ULL * 1024ULL * 1024ULL)
@@ -14,6 +15,19 @@ static const display_driver_t *g_display_drivers[MAX_DISPLAY_DRIVERS];
 static uint32_t g_display_driver_count = 0;
 static int g_display_binary_registered = 0;
 static display_boot_framebuffer_t g_boot_framebuffer;
+
+static void log_display_driver_status(const char *severity,
+                                      const char *stage,
+                                      const char *name)
+{
+    serial_write_string("[OS] [DRIVER] [");
+    serial_write_string(severity);
+    serial_write_string("] subsystem=DISPLAY stage=");
+    serial_write_string(stage);
+    serial_write_string(" driver=");
+    serial_write_string(name);
+    serial_write_string("\n");
+}
 
 bool driver_select_register_display_driver(const display_driver_t *driver) {
     if (!driver || !driver->name || !driver->init || !driver->is_ready ||
@@ -29,7 +43,7 @@ bool driver_select_register_display_driver(const display_driver_t *driver) {
     }
 
     if (g_display_driver_count >= MAX_DISPLAY_DRIVERS) {
-        serial_write_string("[OS] [DRIVER] Display driver registry is full\n");
+        log_display_driver_status("NONFATAL", "registry_full", "N/A");
         return false;
     }
 
@@ -59,9 +73,7 @@ static void load_display_driver_module(driver_module_id_t module_id,
                                     DISPLAY_DRIVER_MODULE_MAX_SIZE,
                                     DISPLAY_DRIVER_MODULE_MAX_IMAGE_SIZE,
                                     &entry)) {
-        serial_write_string("[OS] [DRIVER] Failed to load module: ");
-        serial_write_string(module_name);
-        serial_write_string("\n");
+        log_display_driver_status("NONFATAL", "module_load", module_name);
         return;
     }
 
@@ -71,23 +83,29 @@ static void load_display_driver_module(driver_module_id_t module_id,
         init_fn(driver_module_manager_kernel_api());
 
     if (!driver) {
-        serial_write_string("[OS] [DRIVER] Module init failed: ");
-        serial_write_string(module_name);
-        serial_write_string("\n");
+        log_display_driver_status("NONFATAL", "module_init", module_name);
         return;
     }
 
     if (!driver_select_register_display_driver(driver)) {
-        serial_write_string("[OS] [DRIVER] Module register failed: ");
-        serial_write_string(module_name);
-        serial_write_string("\n");
+        log_display_driver_status("NONFATAL", "module_register", module_name);
         return;
     }
 
-    serial_write_string("[OS] [DRIVER] Module loaded: ");
-    serial_write_string(module_name);
-    serial_write_string("\n");
+    log_display_driver_status("INFO", "module_loaded", module_name);
 }
+
+static const display_driver_t g_boot_fb_driver = {
+    .name        = "BootFramebuffer",
+    .probe       = fb_probe,
+    .init        = fb_init,
+    .is_ready    = fb_is_ready,
+    .width       = fb_width,
+    .height      = fb_height,
+    .draw_pixel  = fb_draw_pixel,
+    .fill_rect   = fb_fill_rect,
+    .present     = fb_present,
+};
 
 void driver_select_register_binary_display_drivers(void) {
     if (g_display_binary_registered) {
@@ -95,6 +113,7 @@ void driver_select_register_binary_display_drivers(void) {
     }
 
     g_display_binary_registered = 1;
+    driver_select_register_display_driver(&g_boot_fb_driver);
     load_display_driver_module(DRIVER_MODULE_ID_DISPLAY_VIRTIO,
                                "VirtIO_Driver.ELF");
     load_display_driver_module(DRIVER_MODULE_ID_DISPLAY_INTEL_UHD_9TH,
@@ -110,29 +129,18 @@ const display_driver_t *driver_select_pick_display_driver(void) {
             continue;
         }
 
-        if (driver->set_framebuffer &&
-            g_boot_framebuffer.addr &&
-            g_boot_framebuffer.width &&
-            g_boot_framebuffer.height &&
-            g_boot_framebuffer.pixels_per_scan_line) {
-            (void)driver->set_framebuffer(&g_boot_framebuffer);
+        if (driver->probe && !driver->probe()) {
+            continue;
         }
 
-        if (!driver->probe || driver->probe()) {
-            if (!driver->init()) {
-                serial_write_string("[OS] [DRIVER] Display driver init failed: ");
-                serial_write_string(driver->name);
-                serial_write_string("\n");
-                continue;
-            }
-
-            serial_write_string("[OS] [DRIVER] Display driver selected: ");
-            serial_write_string(driver->name);
-            serial_write_string("\n");
-            return driver;
+        if (!driver->init()) {
+            log_display_driver_status("NONFATAL", "driver_init", driver->name);
+            continue;
         }
+
+        log_display_driver_status("INFO", "driver_selected", driver->name);
+        return driver;
     }
-
-    serial_write_string("[OS] [DRIVER] No display driver initialized\n");
+    log_display_driver_status("FATAL", "driver_select", "none");
     return NULL;
 }

@@ -2,6 +2,7 @@
 #include "../Serial.h"
 #include "../Kernel_Main.h"
 #include "../ProcessManager/ProcessManager.h"
+#include "../Sync/Spinlock.h"
 #include <stddef.h>
 #include <stdint.h>
 
@@ -10,6 +11,7 @@
 #define USER_RESERVED_TOP USER_STACK_TOP
 
 static uint8_t page_bitmap[MAX_PAGES];
+int paging_swap_reclaim_one_page(void);
 
 extern uint8_t _kernel_end;
 
@@ -21,7 +23,11 @@ enum {
     EFI_CONVENTIONAL_MEMORY  = 7
 };
 
+#define HEAP_MAGIC 0x1BADB002
+#define HEAP_MAGIC_FREE 0x2BADB002
+
 typedef struct memory_block {
+    uint32_t magic;
     uint32_t size;
     int is_free;
     struct memory_block* next;
@@ -36,9 +42,12 @@ static uint32_t total_freed = 0;
 #define HEAP_PAGE_COUNT 4096
 
 static uint32_t heap_start_page = 0;
-static volatile uint32_t heap_lock = 0;
-static volatile uint32_t page_lock = 0;
+static spinlock_t heap_lock;
+static spinlock_t page_lock;
 static uint32_t page_alloc_hint = 0;
+static uint32_t g_oom_total = 0;
+static uint32_t g_oom_kmalloc = 0;
+static uint32_t g_oom_pages = 0;
 
 #define MIN_ALLOC_ALIGN 8u
 #define MIN_SPLIT_REMAINDER 64u
@@ -55,20 +64,27 @@ static inline void irq_restore(uint64_t flags) {
     }
 }
 
-static inline void spin_lock(volatile uint32_t *lock) {
-    while (__sync_lock_test_and_set(lock, 1) != 0) {
-        while (*lock != 0) {
-            __asm__ volatile ("pause");
-        }
-    }
-}
-
-static inline void spin_unlock(volatile uint32_t *lock) {
-    __sync_lock_release(lock);
-}
-
 static inline uint32_t align_up(uint32_t value, uint32_t align) {
     return (value + align - 1u) & ~(align - 1u);
+}
+
+static void memory_report_oom(const char *site, uint64_t request)
+{
+    ++g_oom_total;
+    int32_t pid = process_get_current_pid();
+    serial_write_string("[OS] [OOM] policy=log-only site=");
+    serial_write_string(site);
+    serial_write_string(" request=");
+    serial_write_uint64(request);
+    serial_write_string(" bytes pid=");
+    if (pid < 0) {
+        serial_write_string("none");
+    } else {
+        serial_write_uint32((uint32_t)pid);
+    }
+    serial_write_string(" total=");
+    serial_write_uint32(g_oom_total);
+    serial_write_string("\n");
 }
 
 static memory_block_t* find_block_by_payload(void *ptr, memory_block_t **prev_out) {
@@ -94,6 +110,7 @@ static memory_block_t* split_block_if_needed(memory_block_t *block, uint32_t siz
     if (block->size >= size + sizeof(memory_block_t) + MIN_SPLIT_REMAINDER) {
         memory_block_t* new_block =
             (memory_block_t*)((uint8_t*)block + sizeof(memory_block_t) + size);
+        new_block->magic = HEAP_MAGIC_FREE;
         new_block->size = block->size - size - sizeof(memory_block_t);
         new_block->is_free = 1;
         new_block->next = block->next;
@@ -117,6 +134,7 @@ static void* kmalloc_locked(uint32_t size) {
         if (current->is_free && current->size >= size) {
             current = split_block_if_needed(current, size);
             current->is_free = 0;
+            current->magic = HEAP_MAGIC;
             total_allocated += current->size;
             heap_search_hint = (current->next != NULL) ? current->next : heap_start;
             return (void*)((uint8_t*)current + sizeof(memory_block_t));
@@ -196,6 +214,7 @@ void memory_init(void) {
     uint32_t start_page = calc_heap_start_page();
     heap_start = (memory_block_t*)((uintptr_t)start_page * PAGE_SIZE);
     
+    heap_start->magic = HEAP_MAGIC_FREE;
     heap_start->size = (HEAP_PAGE_COUNT * PAGE_SIZE) - sizeof(memory_block_t);
     heap_start->is_free = 1;
     heap_start->next = NULL;
@@ -205,6 +224,11 @@ void memory_init(void) {
     total_allocated = 0;
     total_freed = 0;
     page_alloc_hint = 0;
+    g_oom_total = 0;
+    g_oom_kmalloc = 0;
+    g_oom_pages = 0;
+    spinlock_init(&heap_lock);
+    spinlock_init(&page_lock);
     
     serial_write_string("[OS] [Memory] Heap initialized at ");
     serial_write_uint64((uint64_t)heap_start);
@@ -224,17 +248,15 @@ void* kmalloc(uint32_t size) {
     size = align_up(size, MIN_ALLOC_ALIGN);
 
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&heap_lock);
+    spinlock_lock(&heap_lock);
     void *ptr = kmalloc_locked(size);
-    spin_unlock(&heap_lock);
+    spinlock_unlock(&heap_lock);
     irq_restore(irq_flags);
     if (ptr != NULL) {
         return ptr;
     }
-    
-    serial_write_string("[OS] [Memory] kmalloc: Out of memory (requested ");
-    serial_write_uint32(size);
-    serial_write_string(" bytes)\n");
+    ++g_oom_kmalloc;
+    memory_report_oom("kmalloc", size);
     return NULL;
 }
 
@@ -256,25 +278,38 @@ void kfree(void* ptr) {
     }
 
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&heap_lock);
+    spinlock_lock(&heap_lock);
     memory_block_t* prev = NULL;
     memory_block_t* block = find_block_by_payload(ptr, &prev);
     if (block == NULL) {
-        spin_unlock(&heap_lock);
+        spinlock_unlock(&heap_lock);
         irq_restore(irq_flags);
         serial_write_string("[OS] [Memory] kfree: Pointer not tracked\n");
         return;
     }
 
+    if (block->magic != HEAP_MAGIC) {
+        spinlock_unlock(&heap_lock);
+        irq_restore(irq_flags);
+        serial_write_string("[OS] [Memory] kfree: Heap corruption detected (Invalid Magic)\n");
+        return;
+    }
+
     if (block->is_free) {
-        spin_unlock(&heap_lock);
+        spinlock_unlock(&heap_lock);
         irq_restore(irq_flags);
         serial_write_string("[OS] [Memory] kfree: Double free detected\n");
         return;
     }
     
     block->is_free = 1;
+    block->magic = HEAP_MAGIC_FREE;
     total_freed += block->size;
+
+    uint8_t* payload = (uint8_t*)ptr;
+    for (uint32_t i = 0; i < block->size; i++) {
+        payload[i] = 0;
+    }
 
     if (block->next != NULL && block->next->is_free) {
         block->size += sizeof(memory_block_t) + block->next->size;
@@ -288,7 +323,7 @@ void kfree(void* ptr) {
     }
 
     heap_search_hint = block;
-    spin_unlock(&heap_lock);
+    spinlock_unlock(&heap_lock);
     irq_restore(irq_flags);
 }
 
@@ -324,10 +359,10 @@ void* krealloc(void* ptr, uint32_t new_size) {
 
     uint32_t old_size = 0;
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&heap_lock);
+    spinlock_lock(&heap_lock);
     memory_block_t* block = find_block_by_payload(ptr, NULL);
-    if (block == NULL || block->is_free) {
-        spin_unlock(&heap_lock);
+    if (block == NULL || block->is_free || block->magic != HEAP_MAGIC) {
+        spinlock_unlock(&heap_lock);
         irq_restore(irq_flags);
         serial_write_string("[OS] [Memory] krealloc: Invalid pointer\n");
         return NULL;
@@ -336,7 +371,7 @@ void* krealloc(void* ptr, uint32_t new_size) {
 
     if (new_size <= old_size) {
         split_block_if_needed(block, new_size);
-        spin_unlock(&heap_lock);
+        spinlock_unlock(&heap_lock);
         irq_restore(irq_flags);
         return ptr;
     }
@@ -347,11 +382,11 @@ void* krealloc(void* ptr, uint32_t new_size) {
         block->size += sizeof(memory_block_t) + block->next->size;
         block->next = block->next->next;
         split_block_if_needed(block, new_size);
-        spin_unlock(&heap_lock);
+        spinlock_unlock(&heap_lock);
         irq_restore(irq_flags);
         return ptr;
     }
-    spin_unlock(&heap_lock);
+    spinlock_unlock(&heap_lock);
     irq_restore(irq_flags);
     
     void* new_ptr = kmalloc(new_size);
@@ -374,7 +409,7 @@ uint32_t get_free_memory(void) {
     if (!heap_initialized) return 0;
     
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&heap_lock);
+    spinlock_lock(&heap_lock);
     uint32_t free_memory = 0;
     memory_block_t* current = heap_start;
     
@@ -384,16 +419,16 @@ uint32_t get_free_memory(void) {
         }
         current = current->next;
     }
-    spin_unlock(&heap_lock);
+    spinlock_unlock(&heap_lock);
     irq_restore(irq_flags);
     return free_memory;
 }
 
 uint32_t get_used_memory(void) {
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&heap_lock);
+    spinlock_lock(&heap_lock);
     uint32_t used = total_allocated - total_freed;
-    spin_unlock(&heap_lock);
+    spinlock_unlock(&heap_lock);
     irq_restore(irq_flags);
     return used;
 }
@@ -405,7 +440,7 @@ void debug_print_memory_info(void) {
     }
     
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&heap_lock);
+    spinlock_lock(&heap_lock);
     memory_block_t* current = heap_start;
     int block_count = 0;
     uint32_t free_blocks = 0;
@@ -428,25 +463,30 @@ void debug_print_memory_info(void) {
     serial_write_string(", Used: ");
     serial_write_uint32(used_blocks);
     serial_write_string(")\n");
-    spin_unlock(&heap_lock);
+    spinlock_unlock(&heap_lock);
     irq_restore(irq_flags);
 }
 
 void* alloc_page(void) {
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&page_lock);
+    spinlock_lock(&page_lock);
     for (size_t offset = 0; offset < MAX_PAGES; offset++) {
         size_t i = (page_alloc_hint + offset) % MAX_PAGES;
         if (page_bitmap[i] == 0) {
             page_bitmap[i] = 1;
             page_alloc_hint = (uint32_t)((i + 1) % MAX_PAGES);
-            spin_unlock(&page_lock);
+            spinlock_unlock(&page_lock);
             irq_restore(irq_flags);
             return (void*)(i * PAGE_SIZE);
         }
     }
-    spin_unlock(&page_lock);
+    spinlock_unlock(&page_lock);
     irq_restore(irq_flags);
+    if (paging_swap_reclaim_one_page() > 0) {
+        return alloc_page();
+    }
+    ++g_oom_pages;
+    memory_report_oom("alloc_page", PAGE_SIZE);
     return NULL;
 }
 
@@ -459,7 +499,7 @@ void* alloc_contiguous_pages(uint32_t page_count, uint32_t align_pages) {
     }
 
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&page_lock);
+    spinlock_lock(&page_lock);
 
     uint32_t limit = (uint32_t)(MAX_PAGES - page_count);
     for (uint32_t start = 0; start <= limit; ++start) {
@@ -480,13 +520,18 @@ void* alloc_contiguous_pages(uint32_t page_count, uint32_t align_pages) {
             page_bitmap[start + i] = 1;
         }
         page_alloc_hint = (start + page_count) % MAX_PAGES;
-        spin_unlock(&page_lock);
+        spinlock_unlock(&page_lock);
         irq_restore(irq_flags);
         return (void *)((uintptr_t)start * PAGE_SIZE);
     }
 
-    spin_unlock(&page_lock);
+    spinlock_unlock(&page_lock);
     irq_restore(irq_flags);
+    if (paging_swap_reclaim_one_page() > 0) {
+        return alloc_contiguous_pages(page_count, align_pages);
+    }
+    ++g_oom_pages;
+    memory_report_oom("alloc_contiguous_pages", (uint64_t)page_count * PAGE_SIZE);
     return NULL;
 }
 
@@ -495,14 +540,14 @@ void free_page(void* addr) {
 
     uintptr_t page_num = (uintptr_t)addr / PAGE_SIZE;
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&page_lock);
+    spinlock_lock(&page_lock);
     if (page_num < MAX_PAGES) {
         page_bitmap[page_num] = 0;
         if (page_num < page_alloc_hint) {
             page_alloc_hint = (uint32_t)page_num;
         }
     }
-    spin_unlock(&page_lock);
+    spinlock_unlock(&page_lock);
     irq_restore(irq_flags);
 }
 
@@ -517,7 +562,7 @@ void free_contiguous_pages(void* addr, uint32_t page_count) {
     }
 
     uint64_t irq_flags = irq_save_disable();
-    spin_lock(&page_lock);
+    spinlock_lock(&page_lock);
 
     uint32_t max_pages = (uint32_t)(MAX_PAGES - start_page);
     if (page_count > max_pages) {
@@ -531,6 +576,56 @@ void free_contiguous_pages(void* addr, uint32_t page_count) {
         page_alloc_hint = (uint32_t)start_page;
     }
 
-    spin_unlock(&page_lock);
+    spinlock_unlock(&page_lock);
     irq_restore(irq_flags);
+}
+
+static void memory_dump_hex_byte(uint8_t value)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    serial_write_char(hex[(value >> 4) & 0x0F]);
+    serial_write_char(hex[value & 0x0F]);
+}
+
+void memory_dump_virtual(const void *addr, uint32_t bytes)
+{
+    if (addr == NULL || bytes == 0) {
+        serial_write_string("[OS] [Memory] dump_virtual: invalid request\n");
+        return;
+    }
+
+    const uint8_t *data = (const uint8_t *)addr;
+    uint64_t base = (uint64_t)(uintptr_t)addr;
+
+    serial_write_string("[OS] [Memory] Virtual dump start=");
+    serial_write_uint64(base);
+    serial_write_string(" bytes=");
+    serial_write_uint32(bytes);
+    serial_write_string("\n");
+
+    for (uint32_t i = 0; i < bytes; i += 16) {
+        serial_write_string("[OS] [Memory] ");
+        serial_write_uint64(base + i);
+        serial_write_string(": ");
+
+        uint32_t line = bytes - i;
+        if (line > 16) {
+            line = 16;
+        }
+
+        for (uint32_t j = 0; j < line; ++j) {
+            memory_dump_hex_byte(data[i + j]);
+            serial_write_char(' ');
+        }
+        serial_write_string("\n");
+    }
+}
+
+void memory_dump_physical(uint64_t phys_addr, uint32_t bytes)
+{
+    if (bytes == 0) {
+        serial_write_string("[OS] [Memory] dump_physical: invalid request\n");
+        return;
+    }
+    memory_dump_virtual((const void *)(uintptr_t)phys_addr, bytes);
 }

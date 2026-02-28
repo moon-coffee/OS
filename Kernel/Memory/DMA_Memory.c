@@ -5,6 +5,7 @@
 
 #include "DMA_Memory.h"
 #include "Memory_Main.h"
+#include "../Sync/Spinlock.h"
 #include "../Paging/Paging_Main.h"
 #include "../Serial.h"
 
@@ -34,19 +35,7 @@ typedef struct {
 } dma_pool_t;
 
 static dma_pool_t g_pool;
-
-static volatile int g_lock = 0;
-
-static inline void dma_lock(void)
-{
-    while (__atomic_test_and_set(&g_lock, __ATOMIC_ACQUIRE))
-        __asm__ volatile("pause");
-}
-
-static inline void dma_unlock(void)
-{
-    __atomic_clear(&g_lock, __ATOMIC_RELEASE);
-}
+static spinlock_t g_lock;
 
 bool dma_init(void)
 {
@@ -81,10 +70,10 @@ void* dma_alloc(size_t bytes, uint64_t *phys_out)
         if (!dma_init()) return NULL;
     }
 
-    dma_lock();
+    spinlock_lock(&g_lock);
 
     if (g_pool.block_cnt >= DMA_MAX_BLOCKS) {
-        dma_unlock();
+        spinlock_unlock(&g_lock);
         serial_write_string("[DMA] block table full\n");
         return NULL;
     }
@@ -110,7 +99,7 @@ void* dma_alloc(size_t bytes, uint64_t *phys_out)
         }
 
         if (best_idx == DMA_MAX_BLOCKS) {
-            dma_unlock();
+            spinlock_unlock(&g_lock);
             serial_write_string("[DMA] out of memory\n");
             return NULL;
         }
@@ -122,7 +111,7 @@ void* dma_alloc(size_t bytes, uint64_t *phys_out)
         uint64_t phys = g_pool.base_phys + (b->virt - (uintptr_t)g_pool.base_virt);
         if (phys_out) *phys_out = phys;
 
-        dma_unlock();
+        spinlock_unlock(&g_lock);
         return (void*)b->virt;
     }
 
@@ -138,7 +127,7 @@ void* dma_alloc(size_t bytes, uint64_t *phys_out)
 
     if (phys_out) *phys_out = phys;
 
-    dma_unlock();
+    spinlock_unlock(&g_lock);
     return virt;
 }
 
@@ -146,7 +135,7 @@ void dma_free(void *virt, size_t bytes)
 {
     if (!virt || !g_pool.initialized) return;
 
-    dma_lock();
+    spinlock_lock(&g_lock);
 
     uintptr_t addr = (uintptr_t)virt;
     for (uint32_t i = 0; i < g_pool.block_cnt; i++) {
@@ -154,12 +143,12 @@ void dma_free(void *virt, size_t bytes)
         if (b->virt == addr && b->used) {
             memset(virt, 0, b->size);
             b->used = false;
-            dma_unlock();
+            spinlock_unlock(&g_lock);
             return;
         }
     }
 
-    dma_unlock();
+    spinlock_unlock(&g_lock);
     serial_write_string("[DMA] dma_free: unknown pointer\n");
     (void)bytes;
 }
@@ -176,7 +165,7 @@ void dma_dump_stats(void)
         return;
     }
 
-    dma_lock();
+    spinlock_lock(&g_lock);
 
     uint32_t used_blocks = 0;
     size_t   used_bytes  = 0;
@@ -194,6 +183,6 @@ void dma_dump_stats(void)
 
     size_t bump_remaining = g_pool.total - g_pool.offset;
 
-    dma_unlock();
+    spinlock_unlock(&g_lock);
     serial_write_string("\n");
 }

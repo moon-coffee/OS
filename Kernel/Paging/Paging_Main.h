@@ -35,6 +35,9 @@ int paging_map_user_range_alloc(uint64_t cr3,
                                 uint64_t start,
                                 uint64_t size,
                                 uint64_t flags);
+void paging_swap_set_enabled(int enable);
+int paging_swap_reclaim_one_page(void);
+int paging_handle_swap_fault(uint64_t cr3, uint64_t fault_addr);
 void *pmm_alloc_pages(size_t num_pages);
 void pmm_free_pages(void *virt, size_t num_pages);
 uint64_t get_phys_base(void);
