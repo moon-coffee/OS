@@ -24,12 +24,20 @@ sudo apt install -y gnu-efi
 sudo apt install -y parted
 sudo apt install -y qemu-system-x86
 sudo apt install -y gdb
+sudo apt install -y dosfstools
+sudo apt install -y xorriso
+sudo apt install -y mtools
+sudo apt install -y util-linux
 ```
 2. Build and run:
 ```bash
 make
 make run
 ```
+
+## Notes
+* This project assumes building in an interactive Linux environment (such as a local terminal).
+* You may not be able to build successfully in non-interactive environments (CI/CD, restricted container environments, etc.).
 
 ## Current Feature Set
 - UEFI bootloader path.

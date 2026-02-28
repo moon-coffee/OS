@@ -14,7 +14,6 @@ static const driver_kernel_api_t *g_driver_api = NULL;
 
 #define inb g_driver_api->inb
 #define outb g_driver_api->outb
-#define serial_write_string g_driver_api->serial_write_string
 #endif
 
 #define PS2_DATA_PORT    0x60
