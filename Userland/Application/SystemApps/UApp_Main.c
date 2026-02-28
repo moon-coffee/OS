@@ -130,6 +130,22 @@ void draw_png_image(uint32_t* image_data, uint32_t width, uint32_t height,
     }
 }
 
+static void log_png_decode_failure(const char *context)
+{
+    PNGDecodeStatus status = png_decoder_last_status();
+    serial_write_string("[APP] PNG decode failed");
+    if (context != NULL) {
+        serial_write_string(" (");
+        serial_write_string(context);
+        serial_write_string(")");
+    }
+    serial_write_string(": code=");
+    serial_write_uint32((uint32_t)status);
+    serial_write_string(" message=");
+    serial_write_string(png_decode_status_string(status));
+    serial_write_string("\n");
+}
+
 void _start(void)
 {
     serial_write_string("[U][APP] standalone process started\n");
@@ -144,27 +160,29 @@ void _start(void)
     draw_fill_rect(0, 0, APP_SCREEN_WIDTH, APP_SCREEN_HEIGHT, 0xFFFFFFFFu);
 
     uint32_t file_size = 0;
-    uint8_t* png_file_data = load_file("LOGO.PNG", &file_size);
+    uint8_t* png_file_data = load_file("Userland/image.png", &file_size);
     
     uint32_t image_width = 0, image_height = 0;
     uint32_t* decoded_image = NULL;
 
     if (png_file_data) {
         serial_write_string("[APP] PNG file loaded, size: ");
+        serial_write_uint32(file_size);
         serial_write_string("\n");
 
         decoded_image = png_decode_buffer(png_file_data, file_size,
                                          &image_width, &image_height);
 
         if (decoded_image) {
-            serial_write_string("[APP] PNG decoded successfully: ");
+            serial_write_string("[APP] PNG decoded successfully\n");
+            serial_write_string("[APP] Image width: ");
+            serial_write_uint32(image_width);
             serial_write_string("\n");
-            serial_write_string("[APP] Image size: ");
+            serial_write_string("[APP] Image height: ");
+            serial_write_uint32(image_height);
             serial_write_string("\n");
         } else {
-            serial_write_string("[APP] PNG decode failed: ");
-            serial_write_string(png_decoder_last_status_string());
-            serial_write_string("\n");
+            log_png_decode_failure("Userland/image.png");
         }
 
         kfree(png_file_data);

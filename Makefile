@@ -242,7 +242,7 @@ __mount_image:
 	sudo cp $(USERLAND_APP_ELF) $$MOUNT_POINT/Userland/SystemApps/UserApp.ELF; \
 	sudo cp $(PCI_DRIVER_ELF) $(FAT32_DRIVER_ELF) $(PS2_DRIVER_ELF) $(VIRTIO_DRIVER_ELF) $(INTEL_DRIVER_ELF) $(GENERIC_DISPLAY_DRIVER_ELF) $$MOUNT_POINT/Kernel/Driver/; \
 	[ -f Kernel/FILE.TXT ] && sudo cp Kernel/FILE.TXT $$MOUNT_POINT/FILE.TXT; \
-	[ -f Userland/LOGO.PNG ] && sudo cp Userland/LOGO.PNG $$MOUNT_POINT/LOGO.PNG; \
+	[ -f Userland/image.png ] && sudo cp Userland/image.png $$MOUNT_POINT/Userland/image.png; \
 	sync; \
 	sudo umount $$MOUNT_POINT || exit 1;
 
@@ -257,7 +257,7 @@ image_esp: all
 	@cp $(USERLAND_APP_ELF) $(ISO_ROOT)/Userland/SystemApps/UserApp.ELF
 	@cp $(PCI_DRIVER_ELF) $(FAT32_DRIVER_ELF) $(PS2_DRIVER_ELF) $(VIRTIO_DRIVER_ELF) $(INTEL_DRIVER_ELF) $(GENERIC_DISPLAY_DRIVER_ELF) $(ISO_ROOT)/Kernel/Driver/
 	@[ -f Kernel/FILE.TXT ] && cp Kernel/FILE.TXT $(ISO_ROOT)/FILE.TXT || true
-	@[ -f Userland/LOGO.PNG ] && cp Userland/LOGO.PNG $(ISO_ROOT)/LOGO.PNG || true
+	@[ -f Userland/image.png ] && cp Userland/image.png $(ISO_ROOT)/Userland/image.png || true
 	@$(MAKE) __create_esp_iso
 
 __create_esp_iso:

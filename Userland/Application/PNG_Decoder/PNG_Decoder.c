@@ -72,6 +72,8 @@ const char* png_decode_status_string(PNGDecodeStatus status)
     case PNG_DECODE_ERR_NULL_ARGUMENT:     return "null argument";
     case PNG_DECODE_ERR_BAD_SIGNATURE:     return "bad png signature";
     case PNG_DECODE_ERR_TRUNCATED_CHUNK:   return "truncated png chunk";
+    case PNG_DECODE_ERR_INVALID_CHUNK_LENGTH: return "invalid png chunk length";
+    case PNG_DECODE_ERR_BAD_CRC:           return "png chunk crc mismatch";
     case PNG_DECODE_ERR_INVALID_IHDR:      return "invalid ihdr";
     case PNG_DECODE_ERR_UNSUPPORTED_FORMAT:return "unsupported png format";
     case PNG_DECODE_ERR_MISSING_IHDR:      return "missing ihdr";
@@ -406,6 +408,44 @@ static uint16_t read_be16(const uint8_t* p)
     return (uint16_t)(((uint16_t)p[0] << 8) | p[1]);
 }
 
+static uint32_t png_crc32_update(uint32_t crc, const uint8_t* data, uint32_t len)
+{
+    for (uint32_t i = 0; i < len; i++) {
+        crc ^= (uint32_t)data[i];
+        for (uint32_t bit = 0; bit < 8u; bit++) {
+            if ((crc & 1u) != 0u) crc = (crc >> 1) ^ 0xEDB88320u;
+            else crc >>= 1;
+        }
+    }
+    return crc;
+}
+
+static uint32_t png_chunk_crc32(uint32_t type, const uint8_t* data, uint32_t len)
+{
+    uint8_t type_bytes[4] = {
+        (uint8_t)(type >> 24),
+        (uint8_t)(type >> 16),
+        (uint8_t)(type >> 8),
+        (uint8_t)type
+    };
+    uint32_t crc = 0xFFFFFFFFu;
+    crc = png_crc32_update(crc, type_bytes, 4u);
+    crc = png_crc32_update(crc, data, len);
+    return ~crc;
+}
+
+static int png_verify_chunk_crc(uint32_t type, const uint8_t* data,
+                                uint32_t len, uint32_t expected_crc)
+{
+    return png_chunk_crc32(type, data, len) == expected_crc;
+}
+
+static int png_chunk_is_ancillary(uint32_t type)
+{
+    uint8_t first_byte = (uint8_t)(type >> 24);
+    return (first_byte & 0x20u) != 0u;
+}
+
 static int add_u32_checked(uint32_t a, uint32_t b, uint32_t* out)
 {
     if (a > UINT32_MAX - b) return 0;
@@ -481,24 +521,37 @@ static int png_parse_meta(const uint8_t* buffer, uint64_t size, PNGMeta* meta)
             png_set_status(PNG_DECODE_ERR_TRUNCATED_CHUNK); return 0;
         }
 
+        const uint8_t* chunk_data = p;
+        uint32_t stored_crc = read_be32(chunk_data + len);
+        if (!png_verify_chunk_crc(type, chunk_data, len, stored_crc)) {
+            png_set_status(PNG_DECODE_ERR_BAD_CRC); return 0;
+        }
+
+        if (!meta->has_ihdr && type != PNG_CHUNK_IHDR) {
+            png_set_status(PNG_DECODE_ERR_MISSING_IHDR); return 0;
+        }
+
         if (type == PNG_CHUNK_IHDR) {
-            if (len < 13u || meta->has_ihdr) {
+            if (meta->has_ihdr) {
                 png_set_status(PNG_DECODE_ERR_INVALID_IHDR); return 0;
             }
-            meta->width      = read_be32(p);
-            meta->height     = read_be32(p + 4);
-            meta->bit_depth  = p[8];
-            meta->color_type = p[9];
+            if (len != 13u) {
+                png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
+            }
+            meta->width      = read_be32(chunk_data);
+            meta->height     = read_be32(chunk_data + 4);
+            meta->bit_depth  = chunk_data[8];
+            meta->color_type = chunk_data[9];
 
             if (meta->width == 0u || meta->height == 0u) {
                 png_set_status(PNG_DECODE_ERR_INVALID_IHDR); return 0;
             }
 
-            if (p[10] != 0u || p[11] != 0u) {
+            if (chunk_data[10] != 0u || chunk_data[11] != 0u) {
                 png_set_status(PNG_DECODE_ERR_UNSUPPORTED_FORMAT); return 0;
             }
 
-            if (p[12] != 0u) {
+            if (chunk_data[12] != 0u) {
                 png_set_status(PNG_DECODE_ERR_UNSUPPORTED_FORMAT); return 0;
             }
             if (png_channels(meta->color_type) < 0 ||
@@ -508,37 +561,62 @@ static int png_parse_meta(const uint8_t* buffer, uint64_t size, PNGMeta* meta)
             meta->has_ihdr = 1;
 
         } else if (type == PNG_CHUNK_PLTE) {
-            if (!meta->has_ihdr || len == 0u || len % 3u != 0u || len > 768u) {
+            if (meta->has_idat) {
                 png_set_status(PNG_DECODE_ERR_INVALID_IHDR); return 0;
             }
-            meta->palette_count = len / 3u;
-            memcpy(meta->palette, p, len);
+            if (meta->color_type == PNG_COLOR_GRAY ||
+                meta->color_type == PNG_COLOR_GRAY_ALPHA) {
+                png_set_status(PNG_DECODE_ERR_UNSUPPORTED_FORMAT); return 0;
+            }
+            if (len == 0u || len % 3u != 0u || len > 768u) {
+                png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
+            }
+            uint32_t palette_count = len / 3u;
+            if (meta->color_type == PNG_COLOR_INDEXED) {
+                uint32_t max_palette_entries = 1u << meta->bit_depth;
+                if (palette_count > max_palette_entries) {
+                    png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
+                }
+            }
+            meta->palette_count = palette_count;
+            memcpy(meta->palette, chunk_data, len);
 
             memset(meta->trns, 0xFF, sizeof(meta->trns));
             meta->has_plte = 1;
 
         } else if (type == PNG_CHUNK_tRNS) {
-            if (!meta->has_ihdr) {
+            if (meta->has_idat || meta->has_trns) {
                 png_set_status(PNG_DECODE_ERR_INVALID_IHDR); return 0;
+            }
+            if (meta->color_type == PNG_COLOR_INDEXED) {
+                if (!meta->has_plte) {
+                    png_set_status(PNG_DECODE_ERR_UNSUPPORTED_FORMAT); return 0;
+                }
+                if (len == 0u || len > meta->palette_count) {
+                    png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
+                }
+                for (uint32_t i = 0; i < len; i++) meta->trns[i] = chunk_data[i];
+                meta->trns_count = len;
+            } else if (meta->color_type == PNG_COLOR_GRAY) {
+                if (len != 2u) {
+                    png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
+                }
+                meta->trns_gray = read_be16(chunk_data);
+            } else if (meta->color_type == PNG_COLOR_RGB) {
+                if (len != 6u) {
+                    png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
+                }
+                meta->trns_r = read_be16(chunk_data);
+                meta->trns_g = read_be16(chunk_data + 2);
+                meta->trns_b = read_be16(chunk_data + 4);
+            } else {
+                png_set_status(PNG_DECODE_ERR_UNSUPPORTED_FORMAT); return 0;
             }
             meta->has_trns = 1;
-            if (meta->color_type == PNG_COLOR_INDEXED) {
-                uint32_t cnt = (len < 256u) ? len : 256u;
-                for (uint32_t i = 0; i < cnt; i++) meta->trns[i] = p[i];
-                meta->trns_count = cnt;
-            } else if (meta->color_type == PNG_COLOR_GRAY) {
-                if (len >= 2u) meta->trns_gray = read_be16(p);
-            } else if (meta->color_type == PNG_COLOR_RGB) {
-                if (len >= 6u) {
-                    meta->trns_r = read_be16(p);
-                    meta->trns_g = read_be16(p + 2);
-                    meta->trns_b = read_be16(p + 4);
-                }
-            }
 
         } else if (type == PNG_CHUNK_IDAT) {
-            if (!meta->has_ihdr) {
-                png_set_status(PNG_DECODE_ERR_INVALID_IHDR); return 0;
+            if (meta->color_type == PNG_COLOR_INDEXED && !meta->has_plte) {
+                png_set_status(PNG_DECODE_ERR_UNSUPPORTED_FORMAT); return 0;
             }
             uint32_t next;
             if (!add_u32_checked(meta->idat_total_size, len, &next)) {
@@ -548,9 +626,14 @@ static int png_parse_meta(const uint8_t* buffer, uint64_t size, PNGMeta* meta)
             meta->has_idat = 1;
 
         } else if (type == PNG_CHUNK_IEND) {
+            if (len != 0u) {
+                png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
+            }
             if (!meta->has_ihdr) { png_set_status(PNG_DECODE_ERR_MISSING_IHDR); return 0; }
             if (!meta->has_idat) { png_set_status(PNG_DECODE_ERR_MISSING_IDAT); return 0; }
             return 1;
+        } else if (!png_chunk_is_ancillary(type)) {
+            png_set_status(PNG_DECODE_ERR_UNSUPPORTED_FORMAT); return 0;
         }
 
         p += (uint64_t)len + 4u;
@@ -576,6 +659,11 @@ static int png_copy_idat(const uint8_t* buffer, uint64_t size,
         if ((uint64_t)(end - p) < (uint64_t)len + 4u) {
             png_set_status(PNG_DECODE_ERR_TRUNCATED_CHUNK); return 0;
         }
+        const uint8_t* chunk_data = p;
+        uint32_t stored_crc = read_be32(chunk_data + len);
+        if (!png_verify_chunk_crc(type, chunk_data, len, stored_crc)) {
+            png_set_status(PNG_DECODE_ERR_BAD_CRC); return 0;
+        }
         if (type == PNG_CHUNK_IDAT) {
             if (len > out_size || written > out_size - len) {
                 png_set_status(PNG_DECODE_ERR_SIZE_OVERFLOW); return 0;
@@ -583,7 +671,7 @@ static int png_copy_idat(const uint8_t* buffer, uint64_t size,
             if ((uint64_t)written + (uint64_t)len > (uint64_t)out_size) {
                 png_set_status(PNG_DECODE_ERR_SIZE_OVERFLOW); return 0;
             }
-            memcpy(out + written, p, len);
+            memcpy(out + written, chunk_data, len);
             written += len;
         } else if (type == PNG_CHUNK_IEND) {
             break;
@@ -592,7 +680,7 @@ static int png_copy_idat(const uint8_t* buffer, uint64_t size,
     }
 
     if (written != out_size) {
-        png_set_status(PNG_DECODE_ERR_DECOMP_SIZE_MISMATCH); return 0;
+        png_set_status(PNG_DECODE_ERR_INVALID_CHUNK_LENGTH); return 0;
     }
     return 1;
 }
